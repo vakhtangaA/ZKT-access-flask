@@ -74,9 +74,6 @@ def add_user(card, pin, ip, port=4370, doors=None):
     else:
         door_access = (True, True, True, True)
 
-    # ტესტირებისთვის
-    is_test_card = (str(card) == '1527402916')
-
     try:
         with ZKAccess(connstr=connstr, device_model=ZK200) as zk:
             user = User(card=card, pin=pin, start_time=datetime.now(), end_time=datetime(9999, 12, 31, 23, 59, 59),
@@ -86,46 +83,16 @@ def add_user(card, pin, ip, port=4370, doors=None):
             with open('output.txt', 'a') as output:
                 output.write(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS" + "\n")
 
-            if is_test_card:
-                print(f"[{get_local_time()}] TEST MODE: card={card}, doors={doors}, door_access={door_access}")
-                with open('output.txt', 'a') as output:
-                    output.write(f"[{get_local_time()}] TEST MODE: card={card}, doors={doors}, door_access={door_access}" + "\n")
-                
-                try:
-                    zk.table('UserAuthorize').where(pin=pin).delete_all()
-                    print(f"[{get_local_time()}] TEST MODE: Deleted old UserAuthorize for pin={pin}")
-                    with open('output.txt', 'a') as output:
-                        output.write(f"[{get_local_time()}] TEST MODE: Deleted old UserAuthorize for pin={pin}" + "\n")
-                except:
-                    pass
-                
-                userAuthorize = UserAuthorize(pin=pin, timezone_id=1, doors=door_access).with_zk(zk)
-                userAuthorize.save()
-                print(f"[{get_local_time()}] TEST MODE: Authorized To Doors: {door_access}")
-                with open('output.txt', 'a') as output:
-                    output.write(f"[{get_local_time()}] TEST MODE: Authorized To Doors: {door_access}" + "\n")
-                
-                for record in zk.table('UserAuthorize'):
-                    if str(record.pin) == str(pin):
-                        print(f"[{get_local_time()}] TEST MODE VERIFY: pin={record.pin}, actual_doors={record.doors}")
-                        with open('output.txt', 'a') as output:
-                            output.write(f"[{get_local_time()}] TEST MODE VERIFY: pin={record.pin}, actual_doors={record.doors}" + "\n")
-                        break
-            else:
-                # ძველი ლოგიკა
-                autorized = False
-                for UserAuthorizeRecord in zk.table('UserAuthorize'):
-                    if UserAuthorizeRecord.pin == pin:
-                        autorized = True
-                        print("Almost Authorized")
-                        with open('output.txt', 'a') as output:
-                            output.write("Almost Authorized" + "\n")
-                if autorized == False:
-                    userAuthorize = UserAuthorize(pin=pin, timezone_id=1, doors=door_access).with_zk(zk)
-                    userAuthorize.save()
-                    print(f"Authorized To Doors: {doors}")
-                    with open('output.txt', 'a') as output:
-                        output.write(f"Authorized To Doors: {doors}" + "\n")
+            try:
+                zk.table('UserAuthorize').where(pin=pin).delete_all()
+            except:
+                pass
+            
+            userAuthorize = UserAuthorize(pin=pin, timezone_id=1, doors=door_access).with_zk(zk)
+            userAuthorize.save()
+            print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
+            with open('output.txt', 'a') as output:
+                output.write(f"[{get_local_time()}] Authorized To Doors: {door_access}" + "\n")
                         
         return True
     except Exception as ex:
@@ -144,42 +111,16 @@ def add_user(card, pin, ip, port=4370, doors=None):
                 with open('output.txt', 'a') as output:
                     output.write(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS ON TRY #2" + "\n")
 
-                if is_test_card:
-                    try:
-                        zk.table('UserAuthorize').where(pin=pin).delete_all()
-                        print(f"[{get_local_time()}] TEST MODE: Deleted old UserAuthorize for pin={pin}")
-                        with open('output.txt', 'a') as output:
-                            output.write(f"[{get_local_time()}] TEST MODE: Deleted old UserAuthorize for pin={pin}" + "\n")
-                    except:
-                        pass
-                    
-                    userAuthorize = UserAuthorize(pin=pin, timezone_id=1, doors=door_access).with_zk(zk)
-                    userAuthorize.save()
-                    print(f"[{get_local_time()}] TEST MODE: Authorized To Doors: {door_access}")
-                    with open('output.txt', 'a') as output:
-                        output.write(f"[{get_local_time()}] TEST MODE: Authorized To Doors: {door_access}" + "\n")
-                    
-                    for record in zk.table('UserAuthorize'):
-                        if str(record.pin) == str(pin):
-                            print(f"[{get_local_time()}] TEST MODE VERIFY: pin={record.pin}, actual_doors={record.doors}")
-                            with open('output.txt', 'a') as output:
-                                output.write(f"[{get_local_time()}] TEST MODE VERIFY: pin={record.pin}, actual_doors={record.doors}" + "\n")
-                            break
-                else:
-                    # ძველი ლოგიკა
-                    autorized = False
-                    for UserAuthorizeRecord in zk.table('UserAuthorize'):
-                        if UserAuthorizeRecord.pin == pin:
-                            autorized = True
-                            print("Almost Authorized")
-                            with open('output.txt', 'a') as output:
-                                output.write("Almost Authorized" + "\n")
-                    if autorized == False:
-                        userAuthorize = UserAuthorize(pin=pin, timezone_id=1, doors=door_access).with_zk(zk)
-                        userAuthorize.save()
-                        print(f"Authorized To Doors: {doors}")
-                        with open('output.txt', 'a') as output:
-                            output.write(f"Authorized To Doors: {doors}" + "\n")
+                try:
+                    zk.table('UserAuthorize').where(pin=pin).delete_all()
+                except:
+                    pass
+                
+                userAuthorize = UserAuthorize(pin=pin, timezone_id=1, doors=door_access).with_zk(zk)
+                userAuthorize.save()
+                print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
+                with open('output.txt', 'a') as output:
+                    output.write(f"[{get_local_time()}] Authorized To Doors: {door_access}" + "\n")
                             
             return True
         except Exception as ex:
