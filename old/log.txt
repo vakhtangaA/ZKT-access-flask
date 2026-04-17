@@ -1,6 +1,0 @@
-2023-08-06 18:00:06.730269 - Unable to connect a device using connstr b'protocol=TCP,ipaddress=95.104.10.210,port=4370,timeout=4000,passwd=': SDK error -2: The command has no response
-Ping Pass
-2023-08-06 18:01:25.297385 - Unable to connect a device using connstr b'protocol=TCP,ipaddress=95.104.10.148,port=4370,timeout=4000,passwd=': SDK error -2: The command has no response
-Ping Failed
-2023-08-06 18:02:01.807051 - Unable to connect a device using connstr b'protocol=TCP,ipaddress=95.104.10.210,port=4370,timeout=4000,passwd=': SDK error -2: The command has no response
-Ping Pass
