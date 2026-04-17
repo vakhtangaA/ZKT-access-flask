@@ -1,0 +1,11 @@
+#!/bin/sh
+
+set -e
+
+repo_root=$(git rev-parse --show-toplevel)
+
+cd "$repo_root"
+
+echo "Running Python integration tests before push..."
+
+python3 -m unittest discover -s tests -p 'test_*integration.py'

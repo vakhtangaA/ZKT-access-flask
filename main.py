@@ -6,11 +6,44 @@ import time
 import sys
 import pytz
 
+MODEL_MAP = {
+    'C3-100': ZK100,
+    'ZK100': ZK100,
+    'C3-200': ZK200,
+    'ACP-200': ZK200,
+    'ZK200': ZK200,
+    'C3-400': ZK400,
+    'ZK400': ZK400,
+}
+
 def get_local_time():
     tz = pytz.timezone('Asia/Tbilisi')
     return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
 
 connstr = "protocol=TCP,ipaddress=149.3.34.167,port=4370,timeout=10000,passwd="
+
+
+def resolve_device_model(model):
+    if model is None:
+        return ZK200
+
+    normalized_model = str(model).strip().upper()
+
+    return MODEL_MAP.get(normalized_model, ZK200)
+
+
+def normalize_timeout(timeout, default):
+    try:
+        return int(timeout)
+    except (TypeError, ValueError):
+        return default
+
+
+def build_connstr(ip, port, timeout, password):
+    normalized_timeout = normalize_timeout(timeout, 4000)
+    normalized_password = '' if password is None else str(password)
+
+    return f"protocol=TCP,ipaddress={ip},port={port},timeout={normalized_timeout},passwd={normalized_password}"
 
 def ping_host(ip):
     try:
@@ -63,11 +96,12 @@ def write_log_success(text):
         logFile.write('\n')
         logFile.close()
 
-def add_user(card, pin, ip, port=4370, doors=None):
+def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', model=None):
     print(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip}")
     with open('output.txt', 'a') as output:
         output.write(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #1" + "\n")
-    connstr = f"protocol=TCP,ipaddress={ip},port={port},timeout=4000,passwd="
+    connstr = build_connstr(ip, port, timeout, password)
+    device_model = resolve_device_model(model)
 
     if doors:
         door_access = (1 in doors, 2 in doors, 3 in doors, 4 in doors)
@@ -75,7 +109,7 @@ def add_user(card, pin, ip, port=4370, doors=None):
         door_access = (True, True, True, True)
 
     try:
-        with ZKAccess(connstr=connstr, device_model=ZK200) as zk:
+        with ZKAccess(connstr=connstr, device_model=device_model) as zk:
             user = User(card=card, pin=pin, start_time=datetime.now(), end_time=datetime(9999, 12, 31, 23, 59, 59),
                         super_authorize=False).with_zk(zk)
             user.save()
@@ -103,7 +137,7 @@ def add_user(card, pin, ip, port=4370, doors=None):
         with open('output.txt', 'a') as output:
             output.write(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2" + "\n")
         try:
-            with ZKAccess(connstr=connstr, device_model=ZK200) as zk:
+            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
                 user = User(card=card, pin=pin, start_time=datetime.now(), end_time=datetime(9999, 12, 31, 23, 59, 59),
                             super_authorize=False).with_zk(zk)
                 user.save()
@@ -132,13 +166,14 @@ def add_user(card, pin, ip, port=4370, doors=None):
     return True
 
 
-def delete_user(card, pin, ip, port):
+def delete_user(card, pin, ip, port, timeout=4000, password='', model=None):
     print(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip}")
     with open('output.txt', 'a') as output:
         output.write(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #1" + "\n")
-    connstr = f"protocol=TCP,ipaddress={ip},port={port},timeout=4000,passwd="
+    connstr = build_connstr(ip, port, timeout, password)
+    device_model = resolve_device_model(model)
     try:
-        with ZKAccess(connstr=connstr, device_model=ZK200) as zk:
+        with ZKAccess(connstr=connstr, device_model=device_model) as zk:
             user = User(card=card, pin=pin,
                         super_authorize=True).with_zk(zk)
             user.delete()
@@ -155,7 +190,7 @@ def delete_user(card, pin, ip, port):
         with open('output.txt', 'a') as output:
             output.write(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2" + "\n")
         try:
-            with ZKAccess(connstr=connstr, device_model=ZK200) as zk:
+            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
                 user = User(card=card, pin=pin,
                             super_authorize=True).with_zk(zk)
                 user.delete()
@@ -173,13 +208,14 @@ def delete_user(card, pin, ip, port):
     return True
 
 
-def get_users(ip, port):
-    connstr = f"protocol=TCP,ipaddress={ip},port={port},timeout=10000,passwd="
+def get_users(ip, port, timeout=10000, password='', model=None):
+    connstr = build_connstr(ip, port, timeout, password)
+    device_model = resolve_device_model(model)
     res = {}
     try:
         with open('output.txt', 'a') as output:
             output.write(f"[{get_local_time()}] TRY #1 GETTING USERS ON DEVICE:  {ip} \n")
-        with ZKAccess(connstr=connstr, device_model=ZK200) as zk:
+        with ZKAccess(connstr=connstr, device_model=device_model) as zk:
             for record in zk.table('User'):
                 res[record.pin] = {
                                     "card": record.card,
@@ -193,7 +229,7 @@ def get_users(ip, port):
         with open('output.txt', 'a') as output:
             output.write(f"[{get_local_time()}] TRY #2 GETTING USERS ON DEVICE:  {ip} \n")
         try:
-            with ZKAccess(connstr=connstr, device_model=ZK200) as zk:
+            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
                 for record in zk.table('User'):
                     res[record.pin] = {
                                         "card": record.card,

@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
-from main import add_user, delete_user, get_users, ping_host_endpoint
-from queue_manager import add_request
+from main import ping_host_endpoint
+from queue_manager import add_user, delete_user, get_users
 import sys
 from datetime import datetime
 import pytz
@@ -40,13 +40,16 @@ def set_user():
     ip = body.get('ip')
     port = body.get('port')
     doors = body.get('doors')
+    timeout = body.get('timeout')
+    password = body.get('password')
+    model = body.get('model')
     print(f"[{get_local_time()}] Recieved request to add user with card: {card} and pin: {pin}")
     with open('output.txt', 'a') as output:
         output.write(f"[{get_local_time()}] Recieved request to add user with card: {card} and pin: {pin}" + "\n")
-    res = add_user(card=card, pin=pin, ip=ip, port=port, doors=doors)
+    res = add_user(card=card, pin=pin, ip=ip, port=port, doors=doors, timeout=timeout, password=password, model=model)
     
     return jsonify({
-        "success": True,
+        "success": res,
         "message": "Added user successfully" if res else "Failed to add user",
     })
 
@@ -58,13 +61,16 @@ def remove_user():
     pin = body.get('pin')
     ip = body.get('ip')
     port = body.get('port')
+    timeout = body.get('timeout')
+    password = body.get('password')
+    model = body.get('model')
     print(f"[{get_local_time()}] Recieved request to remove user with card: {card} and pin: {pin}")
     with open('output.txt', 'a') as output:
         output.write(f"[{get_local_time()}] Recieved request to remove user with card: {card} and pin: {pin}" + "\n")
-    res = delete_user(card=card, pin=pin, ip=ip, port=port)
+    res = delete_user(card=card, pin=pin, ip=ip, port=port, timeout=timeout, password=password, model=model)
     
     return jsonify({
-        "success": True,
+        "success": res,
         "message": "Removed user successfully" if res else "Failed to remove user",
     })
     
@@ -73,7 +79,10 @@ def users():
     body = request.json
     ip = body.get('ip')
     port = body.get('port')
-    res = get_users(ip, port)
+    timeout = body.get('timeout')
+    password = body.get('password')
+    model = body.get('model')
+    res = get_users(ip, port, timeout=timeout, password=password, model=model)
     print(f"[{get_local_time()}] Returned {len(res)} users from host: {ip}")
     with open('output.txt', 'a') as output:
         output.write(f"[{get_local_time()}] returned {len(res)} users from host: {ip}" + "\n")
