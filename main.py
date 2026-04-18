@@ -5,6 +5,7 @@ import ping3
 import time
 import sys
 import pytz
+from observability import capture_exception
 
 MODEL_MAP = {
     'C3-100': ZK100,
@@ -15,6 +16,8 @@ MODEL_MAP = {
     'C3-400': ZK400,
     'ZK400': ZK400,
 }
+
+RETRY_DELAY_SECONDS = 0.5
 
 def get_local_time():
     tz = pytz.timezone('Asia/Tbilisi')
@@ -45,40 +48,49 @@ def build_connstr(ip, port, timeout, password):
 
     return f"protocol=TCP,ipaddress={ip},port={port},timeout={normalized_timeout},passwd={normalized_password}"
 
+
+def write_output(message):
+    with open('output.txt', 'a') as output:
+        output.write(message + "\n")
+
+
+def log_retry_attempt(operation, ip, attempt, exception):
+    message = (
+        f"[{get_local_time()}] {operation} on device with ip: {ip} failed on TRY #{attempt}: "
+        f"{str(exception)}. Retrying once."
+    )
+    print(message)
+    write_output(message)
+    time.sleep(RETRY_DELAY_SECONDS)
+
 def ping_host(ip):
     try:
         rtt = ping3.ping(ip)
         if rtt is not None and rtt is not False:
             print(f"[{get_local_time()}] Ping successful. Round-trip time: {rtt} ms")
-            with open('output.txt', 'a') as output:
-                output.write(f"[{get_local_time()}] Ping successful. Round-trip time: {rtt} ms" + "\n")
+            write_output(f"[{get_local_time()}] Ping successful. Round-trip time: {rtt} ms")
             return f"Ping successful. Round-trip time: {rtt} ms"
         else:
             print(f"[{get_local_time()}] Ping Failed")
-            with open('output.txt', 'a') as output:
-                output.write(f"[{get_local_time()}] Ping Failed" + "\n")
+            write_output(f"[{get_local_time()}] Ping Failed")
             return 'Ping Failed'
     except Exception as e:
-        with open('output.txt', 'a') as output:
-            output.write(f"[{get_local_time()}] An error occurred: {str(e)}" + "\n")
+        write_output(f"[{get_local_time()}] An error occurred: {str(e)}")
 
 def ping_host_endpoint(ip):
     try:
         rtt = ping3.ping(ip)
         if rtt is not None and rtt is not False:
             print(f"[{get_local_time()}] Ping successful. Round-trip time: {rtt} ms")
-            with open('output.txt', 'a') as output:
-                output.write(f"[{get_local_time()}] Ping successful. Round-trip time: {rtt} ms" + "\n")
+            write_output(f"[{get_local_time()}] Ping successful. Round-trip time: {rtt} ms")
             return True
         else:
             print('Ping Failed')
-            with open('output.txt', 'a') as output:
-                output.write('Ping Failed' + "\n")
+            write_output('Ping Failed')
             return False
     except Exception as e:
         print(f"[{get_local_time()}] An error occurred: {str(e)}")
-        with open('output.txt', 'a') as output:
-            output.write(f"[{get_local_time()}] An error occurred: {str(e)}" + "\n")
+        write_output(f"[{get_local_time()}] An error occurred: {str(e)}")
 
 def write_log(text):
     with open('logs/exeptions.txt', 'a') as logFile:
@@ -98,8 +110,7 @@ def write_log_success(text):
 
 def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', model=None):
     print(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip}")
-    with open('output.txt', 'a') as output:
-        output.write(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #1" + "\n")
+    write_output(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #1")
     connstr = build_connstr(ip, port, timeout, password)
     device_model = resolve_device_model(model)
 
@@ -114,8 +125,7 @@ def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', mo
                         super_authorize=False).with_zk(zk)
             user.save()
             print(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS")
-            with open('output.txt', 'a') as output:
-                output.write(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS" + "\n")
+            write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS")
 
             try:
                 zk.table('UserAuthorize').where(pin=pin).delete_all()
@@ -125,25 +135,20 @@ def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', mo
             userAuthorize = UserAuthorize(pin=pin, timezone_id=1, doors=door_access).with_zk(zk)
             userAuthorize.save()
             print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
-            with open('output.txt', 'a') as output:
-                output.write(f"[{get_local_time()}] Authorized To Doors: {door_access}" + "\n")
+            write_output(f"[{get_local_time()}] Authorized To Doors: {door_access}")
                         
         return True
     except Exception as ex:
-        text = f"[{get_local_time()}] Exception when adding user! Device: {ip} - {str(ex)} + '\n' + {ping_host(ip)} + '\n'"
-        with open('output.txt', 'a') as output:
-            output.write(str(ex) + "\n")
-            print(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
-        with open('output.txt', 'a') as output:
-            output.write(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2" + "\n")
+        log_retry_attempt('Adding user', ip, 1, ex)
+        print(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
+        write_output(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
         try:
             with ZKAccess(connstr=connstr, device_model=device_model) as zk:
                 user = User(card=card, pin=pin, start_time=datetime.now(), end_time=datetime(9999, 12, 31, 23, 59, 59),
                             super_authorize=False).with_zk(zk)
                 user.save()
                 print(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS ON TRY #2")
-                with open('output.txt', 'a') as output:
-                    output.write(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS ON TRY #2" + "\n")
+                write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS ON TRY #2")
 
                 try:
                     zk.table('UserAuthorize').where(pin=pin).delete_all()
@@ -153,14 +158,13 @@ def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', mo
                 userAuthorize = UserAuthorize(pin=pin, timezone_id=1, doors=door_access).with_zk(zk)
                 userAuthorize.save()
                 print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
-                with open('output.txt', 'a') as output:
-                    output.write(f"[{get_local_time()}] Authorized To Doors: {door_access}" + "\n")
+                write_output(f"[{get_local_time()}] Authorized To Doors: {door_access}")
                             
             return True
         except Exception as ex:
             text = f"[{get_local_time()}] Exception when adding user! Device: {ip} - {str(ex)} + '\n' + {ping_host(ip)} + '\n'"
-            with open('output.txt', 'a') as output:
-                output.write(text + "\n")
+            write_output(text)
+            capture_exception(ex, device_ip=ip, operation='add_user', port=port, model=model)
             print(text + "\n")
             return False
     return True
@@ -168,8 +172,7 @@ def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', mo
 
 def delete_user(card, pin, ip, port, timeout=4000, password='', model=None):
     print(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip}")
-    with open('output.txt', 'a') as output:
-        output.write(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #1" + "\n")
+    write_output(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #1")
     connstr = build_connstr(ip, port, timeout, password)
     device_model = resolve_device_model(model)
     try:
@@ -178,32 +181,27 @@ def delete_user(card, pin, ip, port, timeout=4000, password='', model=None):
                         super_authorize=True).with_zk(zk)
             user.delete()
             print(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS")
-            with open('output.txt', 'a') as output:
-                output.write(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS" + "\n")
+            write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS")
 
         return True
     except Exception as ex:
-        text = f"[{get_local_time()}] Exception when deleting user! Device: {ip} - {str(ex)} + '\n' + {ping_host(ip)} + '\n'"
-        with open('output.txt', 'a') as output:
-            output.write(str(ex) + "\n")
-            print(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
-        with open('output.txt', 'a') as output:
-            output.write(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2" + "\n")
+        log_retry_attempt('Removing user', ip, 1, ex)
+        print(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
+        write_output(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
         try:
             with ZKAccess(connstr=connstr, device_model=device_model) as zk:
                 user = User(card=card, pin=pin,
                             super_authorize=True).with_zk(zk)
                 user.delete()
                 print(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS ON TRY #2")
-                with open('output.txt', 'a') as output:
-                    output.write(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS ON TRY #2" + "\n")
+                write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS ON TRY #2")
 
             return True
         except Exception as ex:
             text = f"[{get_local_time()}] Exception when deleting user! Device: {ip} - {str(ex)} + '\n' + {ping_host(ip)}"
             print(text)
-            with open('output.txt', 'a') as output:
-                output.write(text + "\n")
+            write_output(text)
+            capture_exception(ex, device_ip=ip, operation='delete_user', port=port, model=model)
             return False
     return True
 
@@ -213,8 +211,7 @@ def get_users(ip, port, timeout=10000, password='', model=None):
     device_model = resolve_device_model(model)
     res = {}
     try:
-        with open('output.txt', 'a') as output:
-            output.write(f"[{get_local_time()}] TRY #1 GETTING USERS ON DEVICE:  {ip} \n")
+        write_output(f"[{get_local_time()}] TRY #1 GETTING USERS ON DEVICE:  {ip} ")
         with ZKAccess(connstr=connstr, device_model=device_model) as zk:
             for record in zk.table('User'):
                 res[record.pin] = {
@@ -223,11 +220,10 @@ def get_users(ip, port, timeout=10000, password='', model=None):
                                    }
     except Exception as ex:
         text = f"[{get_local_time()}] Exeption when retrieving user lists on try #1! Device: {ip} - {str(ex)} + '\n' + {ping_host(ip)}"
-        with open('output.txt', 'a') as output:
-            output.write(text + "\n")
+        write_output(text)
         write_log(text)
-        with open('output.txt', 'a') as output:
-            output.write(f"[{get_local_time()}] TRY #2 GETTING USERS ON DEVICE:  {ip} \n")
+        log_retry_attempt('Getting users', ip, 1, ex)
+        write_output(f"[{get_local_time()}] TRY #2 GETTING USERS ON DEVICE:  {ip} ")
         try:
             with ZKAccess(connstr=connstr, device_model=device_model) as zk:
                 for record in zk.table('User'):
@@ -237,8 +233,8 @@ def get_users(ip, port, timeout=10000, password='', model=None):
                                     }
         except Exception as ex:
             text = f"[{get_local_time()}] Exeption when retrieving user lists on try #2! Device: {ip} - {str(ex)} + '\n' + {ping_host(ip)}"
-            with open('output.txt', 'a') as output:
-                output.write(text + "\n")
+            write_output(text)
             write_log(text)
+            capture_exception(ex, device_ip=ip, operation='get_users', port=port, model=model)
             return {}
     return res

@@ -1,10 +1,12 @@
 from flask import Flask, request, jsonify
 from main import ping_host_endpoint
+from observability import initialize_sentry
 from queue_manager import add_user, delete_user, get_users
 import sys
 from datetime import datetime
 import pytz
 
+initialize_sentry()
 app = Flask(__name__)
 
 def get_local_time():
@@ -19,6 +21,11 @@ def home():
     return jsonify({
         "success": True
     })
+
+
+@app.route('/sentry-debug/')
+def sentry_debug():
+    raise RuntimeError('Sentry test exception from Flask route')
 
 @app.route('/ping/', methods = ['POST'])
 def ping_host():

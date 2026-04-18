@@ -44,13 +44,17 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]) as zkteco, patch(
             'main.ping_host',
             return_value='Ping successful',
-        ), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch('main.open', mock_open()), patch(
+        ), patch('main.capture_exception') as capture_exception, patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.time.sleep'), patch('main.open', mock_open()), patch(
             'main.print'
         ):
             result = main.delete_user('12345', '54321', '10.0.0.15', 4370)
 
         self.assertFalse(result)
         self.assertEqual(2, zkteco.call_count)
+        capture_exception.assert_called_once()
 
     def test_get_users_retries_and_succeeds_on_second_attempt(self):
         zk_instance = MagicMock()
@@ -85,7 +89,10 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]) as zkteco, patch(
             'main.ping_host',
             return_value='Ping successful',
-        ), patch('main.write_log'), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
+        ), patch('main.capture_exception') as capture_exception, patch('main.write_log'), patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.time.sleep'), patch(
             'main.open',
             mock_open(),
         ), patch('main.print'):
@@ -93,6 +100,7 @@ class MainDeviceIntegrationTest(unittest.TestCase):
 
         self.assertEqual({}, result)
         self.assertEqual(2, zkteco.call_count)
+        capture_exception.assert_called_once()
 
     def test_add_user_builds_expected_door_access_tuple(self):
         zk_instance = MagicMock()
@@ -113,6 +121,20 @@ class MainDeviceIntegrationTest(unittest.TestCase):
 
         self.assertTrue(result)
         authorize_class.assert_called_once_with(pin='54321', timezone_id=1, doors=(True, False, True, False))
+
+    def test_add_user_reports_to_sentry_after_two_failed_attempts(self):
+        with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]) as zkteco, patch(
+            'main.ping_host',
+            return_value='Ping successful',
+        ), patch('main.capture_exception') as capture_exception, patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.time.sleep'), patch('main.open', mock_open()), patch('main.print'):
+            result = main.add_user('12345', '54321', '10.0.0.15', 4370, [1, 3])
+
+        self.assertFalse(result)
+        self.assertEqual(2, zkteco.call_count)
+        capture_exception.assert_called_once()
 
     def test_delete_user_uses_custom_timeout_password_and_model(self):
         successful_context = MagicMock()
