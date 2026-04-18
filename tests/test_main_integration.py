@@ -11,6 +11,19 @@ import main
 
 
 class MainDeviceIntegrationTest(unittest.TestCase):
+    def test_resolve_device_model_maps_aliases_and_defaults(self):
+        self.assertIs(main.ZK100, main.resolve_device_model('c3-100'))
+        self.assertIs(main.ZK200, main.resolve_device_model('acp-200'))
+        self.assertIs(main.ZK400, main.resolve_device_model('zk400'))
+        self.assertIs(main.ZK200, main.resolve_device_model(None))
+        self.assertIs(main.ZK200, main.resolve_device_model('unknown-model'))
+
+    def test_build_connstr_normalizes_timeout_and_password(self):
+        self.assertEqual(
+            'protocol=TCP,ipaddress=10.0.0.15,port=4370,timeout=4000,passwd=',
+            main.build_connstr('10.0.0.15', 4370, 'not-a-number', None),
+        )
+
     def test_delete_user_retries_and_succeeds_on_second_attempt(self):
         successful_context = MagicMock()
         successful_context.__enter__.return_value = MagicMock()
@@ -37,6 +50,48 @@ class MainDeviceIntegrationTest(unittest.TestCase):
             result = main.delete_user('12345', '54321', '10.0.0.15', 4370)
 
         self.assertFalse(result)
+        self.assertEqual(2, zkteco.call_count)
+
+    def test_get_users_retries_and_succeeds_on_second_attempt(self):
+        zk_instance = MagicMock()
+        zk_instance.table.return_value = [
+            MagicMock(pin='200', card='100'),
+            MagicMock(pin='201', card='101'),
+        ]
+
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', side_effect=[Exception('first failure'), successful_context]) as zkteco, patch(
+            'main.ping_host',
+            return_value='Ping successful',
+        ), patch('main.write_log'), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
+            'main.open',
+            mock_open(),
+        ), patch('main.print'):
+            result = main.get_users('10.0.0.15', 4370)
+
+        self.assertEqual(
+            {
+                '200': {'card': '100', 'pin': '200'},
+                '201': {'card': '101', 'pin': '201'},
+            },
+            result,
+        )
+        self.assertEqual(2, zkteco.call_count)
+
+    def test_get_users_returns_empty_dict_after_two_failures(self):
+        with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]) as zkteco, patch(
+            'main.ping_host',
+            return_value='Ping successful',
+        ), patch('main.write_log'), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
+            'main.open',
+            mock_open(),
+        ), patch('main.print'):
+            result = main.get_users('10.0.0.15', 4370)
+
+        self.assertEqual({}, result)
         self.assertEqual(2, zkteco.call_count)
 
     def test_add_user_builds_expected_door_access_tuple(self):

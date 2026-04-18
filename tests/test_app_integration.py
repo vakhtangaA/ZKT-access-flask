@@ -106,3 +106,33 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             password='secret',
             model='C3-400',
         )
+
+    def test_users_route_forwards_optional_device_settings_and_returns_users_payload(self):
+        expected_users = {
+            '200': {
+                'card': '100',
+                'pin': '200',
+            },
+        }
+
+        with patch('app.get_users', return_value=expected_users) as get_users, patch(
+            'app.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('app.open', mock_open()), patch('app.print'):
+            response = self.client.post('/controller/users/', json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+                'timeout': 10000,
+                'password': 'secret',
+                'model': 'C3-400',
+            })
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(expected_users, response.get_json()['users'])
+        get_users.assert_called_once_with(
+            '10.0.0.15',
+            4370,
+            timeout=10000,
+            password='secret',
+            model='C3-400',
+        )
