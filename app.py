@@ -22,11 +22,6 @@ def home():
         "success": True
     })
 
-
-@app.route('/sentry-debug/')
-def sentry_debug():
-    raise RuntimeError('Sentry test exception from Flask route')
-
 @app.route('/ping/', methods = ['POST'])
 def ping_host():
     body = request.json

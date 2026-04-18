@@ -37,10 +37,6 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertFalse(response.get_json()['success'])
 
-    def test_sentry_debug_route_raises_exception(self):
-        with self.assertRaises(RuntimeError):
-            self.client.get('/sentry-debug/')
-
     def test_set_user_route_reports_failure_when_add_user_fails(self):
         with patch('app.add_user', return_value=False), patch('app.get_local_time', return_value='2026-04-17 00:00:00'), patch(
             'app.open',
