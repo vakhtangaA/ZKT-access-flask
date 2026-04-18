@@ -3,6 +3,11 @@
 /env35
 /env38
 /env3932
+tests/__pycache__/
+__pycache__/
+*.pyc
+logs/
+output*.txt
 zkt-access-windows.pem
 zkt-access-flask.rdp
 windows.ppk
