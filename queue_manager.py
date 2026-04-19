@@ -1,29 +1,12 @@
 from queue import Queue
-from threading import Thread, Lock
+from threading import Thread
+from device_locks import output_lock, with_device_lock
 from main import add_user as add_user_func
 from main import delete_user as delete_user_func
 from main import get_users as get_users_func
 
 # Define the queue and lock for thread safety
 request_queue = Queue()
-lock = Lock()
-device_locks = {}
-device_locks_lock = Lock()
-
-
-def get_device_lock(ip, port):
-    device_key = f"{ip}:{port}"
-
-    with device_locks_lock:
-        if device_key not in device_locks:
-            device_locks[device_key] = Lock()
-
-        return device_locks[device_key]
-
-
-def with_device_lock(ip, port, operation):
-    with get_device_lock(ip, port):
-        return operation()
 
 # Function to process requests from the queue
 def process_requests():
@@ -41,8 +24,9 @@ def process_requests():
                 get_users(ip, port)
             request_queue.task_done()
         except Exception as e:
-            with open('output.txt', 'a') as output:
-                output.write(f"An error occurred: {str(e)}" + "\n")
+            with output_lock:
+                with open('output.txt', 'a') as output:
+                    output.write(f"An error occurred: {str(e)}" + "\n")
 
 # Function to add a request to the queue
 def add_request(card, pin, ip, port, operation):

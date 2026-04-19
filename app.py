@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify
+from device_locks import output_lock
 from main import ping_host_endpoint
 from observability import initialize_sentry
 from queue_manager import add_user, delete_user, get_users
@@ -16,8 +17,9 @@ def get_local_time():
 @app.route('/')
 def home():
     print(f"[{get_local_time()}] Server received an empty request")
-    with open('output.txt', 'a') as output:
-        output.write(f"[{get_local_time()}] Server received an empty request" + "\n")
+    with output_lock:
+        with open('output.txt', 'a') as output:
+            output.write(f"[{get_local_time()}] Server received an empty request" + "\n")
     return jsonify({
         "success": True
     })
@@ -28,8 +30,9 @@ def ping_host():
     ip = body.get('ip')
     res = ping_host_endpoint(ip)
     print(f"[{get_local_time()}] Ping successful on host: {ip}")
-    with open('output.txt', 'a') as output:
-        output.write(f"[{get_local_time()}] Ping successful on host: {ip}" + "\n")
+    with output_lock:
+        with open('output.txt', 'a') as output:
+            output.write(f"[{get_local_time()}] Ping successful on host: {ip}" + "\n")
     return jsonify({
         "success": res,
     })
@@ -46,8 +49,9 @@ def set_user():
     password = body.get('password')
     model = body.get('model')
     print(f"[{get_local_time()}] Recieved request to add user with card: {card} and pin: {pin}")
-    with open('output.txt', 'a') as output:
-        output.write(f"[{get_local_time()}] Recieved request to add user with card: {card} and pin: {pin}" + "\n")
+    with output_lock:
+        with open('output.txt', 'a') as output:
+            output.write(f"[{get_local_time()}] Recieved request to add user with card: {card} and pin: {pin}" + "\n")
     res = add_user(card=card, pin=pin, ip=ip, port=port, doors=doors, timeout=timeout, password=password, model=model)
     
     return jsonify({
@@ -67,8 +71,9 @@ def remove_user():
     password = body.get('password')
     model = body.get('model')
     print(f"[{get_local_time()}] Recieved request to remove user with card: {card} and pin: {pin}")
-    with open('output.txt', 'a') as output:
-        output.write(f"[{get_local_time()}] Recieved request to remove user with card: {card} and pin: {pin}" + "\n")
+    with output_lock:
+        with open('output.txt', 'a') as output:
+            output.write(f"[{get_local_time()}] Recieved request to remove user with card: {card} and pin: {pin}" + "\n")
     res = delete_user(card=card, pin=pin, ip=ip, port=port, timeout=timeout, password=password, model=model)
     
     return jsonify({
@@ -86,8 +91,9 @@ def users():
     model = body.get('model')
     res = get_users(ip, port, timeout=timeout, password=password, model=model)
     print(f"[{get_local_time()}] Returned {len(res)} users from host: {ip}")
-    with open('output.txt', 'a') as output:
-        output.write(f"[{get_local_time()}] returned {len(res)} users from host: {ip}" + "\n")
+    with output_lock:
+        with open('output.txt', 'a') as output:
+            output.write(f"[{get_local_time()}] returned {len(res)} users from host: {ip}" + "\n")
     return jsonify({
         "users": res,
     })

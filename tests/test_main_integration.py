@@ -1,6 +1,9 @@
 import pathlib
 import sys
+import threading
+import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock, mock_open, patch
 
 PROJECT_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -135,6 +138,58 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(2, zkteco.call_count)
         capture_exception.assert_called_once()
+
+    def test_add_user_serializes_same_device_requests_when_called_directly(self):
+        state = {
+            'current': 0,
+            'max_concurrent': 0,
+        }
+        state_lock = threading.Lock()
+        first_started = threading.Event()
+
+        class FakeZkContext:
+            def __enter__(self_inner):
+                with state_lock:
+                    state['current'] += 1
+                    state['max_concurrent'] = max(state['max_concurrent'], state['current'])
+                    first_started.set()
+
+                time.sleep(0.05)
+
+                zk_instance = MagicMock()
+                zk_instance.table.return_value.where.return_value.delete_all.return_value = None
+
+                return zk_instance
+
+            def __exit__(self_inner, exc_type, exc, tb):
+                with state_lock:
+                    state['current'] -= 1
+
+                return False
+
+        fake_user = MagicMock()
+        fake_user.with_zk.return_value = fake_user
+        fake_user_authorize = MagicMock()
+        fake_user_authorize.with_zk.return_value = fake_user_authorize
+
+        with patch('main.ZKAccess', side_effect=lambda *args, **kwargs: FakeZkContext()), patch(
+            'main.User',
+            return_value=fake_user,
+        ), patch(
+            'main.UserAuthorize',
+            return_value=fake_user_authorize,
+        ), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch('main.open', mock_open()), patch(
+            'main.print'
+        ):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                first_call = executor.submit(main.add_user, '12345', '54321', '10.0.0.15', 4370, [1, 2])
+                self.assertTrue(first_started.wait(timeout=1))
+                second_call = executor.submit(main.add_user, '12346', '54322', '10.0.0.15', 4370, [1, 2])
+
+                self.assertTrue(first_call.result(timeout=1))
+                self.assertTrue(second_call.result(timeout=1))
+
+        self.assertEqual(1, state['max_concurrent'])
 
     def test_delete_user_uses_custom_timeout_password_and_model(self):
         successful_context = MagicMock()
