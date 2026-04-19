@@ -23,6 +23,16 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         queue_manager.request_queue.put(None)
         queue_manager.thread.join(timeout=1)
 
+    def setUp(self):
+        self.environment_patch = patch.dict('os.environ', {'ZKT_SHARED_SECRET': 'test-secret'})
+        self.environment_patch.start()
+        self.authorization_headers = {
+            'Authorization': 'Bearer test-secret',
+        }
+
+    def tearDown(self):
+        self.environment_patch.stop()
+
     def test_remove_user_route_reports_failure_when_delete_user_fails(self):
         with patch('app.delete_user', return_value=False), patch('app.get_local_time', return_value='2026-04-17 00:00:00'), patch(
             'app.open',
@@ -33,7 +43,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 'pin': '54321',
                 'ip': '10.0.0.15',
                 'port': 4370,
-            })
+            }, headers=self.authorization_headers)
 
         self.assertEqual(200, response.status_code)
         self.assertFalse(response.get_json()['success'])
@@ -52,7 +62,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         ), patch('app.open', mock_open()), patch('app.print'):
             response = self.client.post('/ping/', json={
                 'ip': '10.0.0.15',
-            })
+            }, headers=self.authorization_headers)
 
         self.assertEqual(200, response.status_code)
         self.assertFalse(response.get_json()['success'])
@@ -69,7 +79,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 'ip': '10.0.0.15',
                 'port': 4370,
                 'doors': [1, 2],
-            })
+            }, headers=self.authorization_headers)
 
         self.assertEqual(200, response.status_code)
         self.assertFalse(response.get_json()['success'])
@@ -87,7 +97,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 'timeout': 10000,
                 'password': 'secret',
                 'model': 'ZK400',
-            })
+            }, headers=self.authorization_headers)
 
         self.assertEqual(200, response.status_code)
         delete_user.assert_called_once_with(
@@ -114,7 +124,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 'timeout': 10000,
                 'password': 'secret',
                 'model': 'C3-400',
-            })
+            }, headers=self.authorization_headers)
 
         self.assertEqual(200, response.status_code)
         add_user.assert_called_once_with(
@@ -146,7 +156,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 'timeout': 10000,
                 'password': 'secret',
                 'model': 'C3-400',
-            })
+            }, headers=self.authorization_headers)
 
         self.assertEqual(200, response.status_code)
         self.assertEqual(expected_users, response.get_json()['users'])
@@ -172,7 +182,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 'timeout': 9000,
                 'password': 'secret',
                 'model': 'C3-400',
-            })
+            }, headers=self.authorization_headers)
 
         self.assertEqual(200, response.status_code)
         self.assertTrue(response.get_json()['success'])
@@ -198,7 +208,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 'timeout': 9000,
                 'password': 'secret',
                 'model': 'C3-400',
-            })
+            }, headers=self.authorization_headers)
 
         self.assertEqual(200, response.status_code)
         self.assertEqual({'200': {'card': '100', 'pin': '200'}}, response.get_json()['users'])
@@ -239,7 +249,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 'timeout': 9000,
                 'password': 'secret',
                 'model': 'C3-400',
-            })
+            }, headers=self.authorization_headers)
 
         self.assertEqual(200, response.status_code)
         self.assertTrue(response.get_json()['success'])
@@ -247,3 +257,26 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             connstr='protocol=TCP,ipaddress=10.0.0.15,port=4370,timeout=9000,passwd=secret',
             device_model=main.ZK400,
         )
+
+    def test_protected_routes_reject_requests_without_valid_shared_secret(self):
+        response = self.client.post('/controller/user/remove/', json={
+            'card': '12345',
+            'pin': '54321',
+            'ip': '10.0.0.15',
+            'port': 4370,
+        })
+
+        self.assertEqual(401, response.status_code)
+        self.assertFalse(response.get_json()['success'])
+
+    def test_protected_routes_report_when_shared_secret_is_not_configured(self):
+        with patch.dict('os.environ', {}, clear=True):
+            response = self.client.post('/controller/user/remove/', json={
+                'card': '12345',
+                'pin': '54321',
+                'ip': '10.0.0.15',
+                'port': 4370,
+            })
+
+        self.assertEqual(503, response.status_code)
+        self.assertFalse(response.get_json()['success'])
