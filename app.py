@@ -1,3 +1,5 @@
+import hmac
+import os
 from flask import Flask, request, jsonify
 from device_locks import output_lock
 from main import ping_host_endpoint
@@ -9,6 +11,31 @@ import pytz
 
 initialize_sentry()
 app = Flask(__name__)
+
+
+def get_shared_secret():
+    return os.getenv('ZKT_SHARED_SECRET')
+
+
+def authorize_request():
+    configured_secret = get_shared_secret()
+
+    if not configured_secret:
+        return jsonify({
+            "success": False,
+            "message": "Shared secret is not configured",
+        }), 503
+
+    authorization_header = request.headers.get('Authorization', '')
+    expected_header = f'Bearer {configured_secret}'
+
+    if not hmac.compare_digest(authorization_header, expected_header):
+        return jsonify({
+            "success": False,
+            "message": "Unauthorized",
+        }), 401
+
+    return None
 
 def get_local_time():
     tz = pytz.timezone('Asia/Tbilisi')
@@ -26,6 +53,10 @@ def home():
 
 @app.route('/ping/', methods = ['POST'])
 def ping_host():
+    authorization_failure = authorize_request()
+    if authorization_failure is not None:
+        return authorization_failure
+
     body = request.json
     ip = body.get('ip')
     res = ping_host_endpoint(ip)
@@ -39,6 +70,10 @@ def ping_host():
 
 @app.route('/controller/user/set/', methods = ['POST'])
 def set_user():
+    authorization_failure = authorize_request()
+    if authorization_failure is not None:
+        return authorization_failure
+
     body = request.json
     card = body.get('card')
     pin = body.get('pin')
@@ -62,6 +97,10 @@ def set_user():
     
 @app.route('/controller/user/remove/', methods = ['POST'])
 def remove_user():
+    authorization_failure = authorize_request()
+    if authorization_failure is not None:
+        return authorization_failure
+
     body = request.json
     card = body.get('card')
     pin = body.get('pin')
@@ -83,6 +122,10 @@ def remove_user():
     
 @app.route('/controller/users/', methods = ['POST'])
 def users():
+    authorization_failure = authorize_request()
+    if authorization_failure is not None:
+        return authorization_failure
+
     body = request.json
     ip = body.get('ip')
     port = body.get('port')
