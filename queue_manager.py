@@ -2,8 +2,10 @@ from queue import Queue
 from threading import Thread
 from device_locks import output_lock, with_device_lock
 from main import add_user as add_user_func
+from main import check_device as check_device_func
 from main import delete_user as delete_user_func
 from main import get_users as get_users_func
+from main import restart_device as restart_device_func
 
 # Define the queue and lock for thread safety
 request_queue = Queue()
@@ -71,6 +73,34 @@ def get_users(ip, port, timeout=10000, password='', model=None):
         ip,
         port,
         lambda: get_users_func(
+            ip,
+            port,
+            timeout=timeout,
+            password=password,
+            model=model,
+        ),
+    )
+
+
+def restart_device(ip, port=4370, timeout=10000, password='', model=None):
+    return with_device_lock(
+        ip,
+        port,
+        lambda: restart_device_func(
+            ip,
+            port,
+            timeout=timeout,
+            password=password,
+            model=model,
+        ),
+    )
+
+
+def check_device(ip, port=4370, timeout=10000, password='', model=None):
+    return with_device_lock(
+        ip,
+        port,
+        lambda: check_device_func(
             ip,
             port,
             timeout=timeout,

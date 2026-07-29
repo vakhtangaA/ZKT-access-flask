@@ -58,7 +58,7 @@ There is also a separate `output_lock` used only to serialize writes to `output.
 ## Environment
 
 ```env
-ZKT_SHARED_SECRET=shared_secret_used_by_laravel
+ZKTECO_SHARED_SECRET=shared_secret_used_by_laravel
 ```
 
 ## Installation
@@ -70,7 +70,7 @@ pip install -r requirements.txt
 ## Running Locally
 
 ```bash
-export ZKT_SHARED_SECRET=change-me
+export ZKTECO_SHARED_SECRET=change-me
 flask --app app run --host 0.0.0.0 --port 5000
 ```
 
@@ -113,11 +113,32 @@ Removes a user from a controller.
 
 Reads users from a controller.
 
-All controller routes require:
+### `POST /controller/restart/`
+
+Sends the controller restart command. This endpoint requires the shared Bearer
+token and uses the same per-device lock as user operations.
+
+Request body:
+
+```json
+{
+  "ip": "178.134.182.19",
+  "port": 4370,
+  "model": "C3-200"
+}
+```
+
+The restart route requires:
 
 ```http
-Authorization: Bearer <ZKT_SHARED_SECRET>
+Authorization: Bearer <ZKTECO_SHARED_SECRET>
 ```
+
+### `POST /controller/health/`
+
+Opens and closes a real ZKTeco SDK connection. This is the preferred health
+check because ICMP ping can succeed while the controller service is unavailable.
+The endpoint requires the same shared Bearer token as the restart route.
 
 ## What `-307` Means
 

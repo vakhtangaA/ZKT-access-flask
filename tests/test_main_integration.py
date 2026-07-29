@@ -27,6 +27,66 @@ class MainDeviceIntegrationTest(unittest.TestCase):
             main.build_connstr('10.0.0.15', 4370, 'not-a-number', None),
         )
 
+    def test_restart_device_calls_sdk_restart(self):
+        zk_instance = MagicMock()
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context) as zkteco, patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()):
+            result = main.restart_device('10.0.0.15', 4370, timeout=9000, model='C3-400')
+
+        self.assertTrue(result)
+        zkteco.assert_called_once_with(
+            connstr='protocol=TCP,ipaddress=10.0.0.15,port=4370,timeout=9000,passwd=',
+            device_model=main.ZK400,
+        )
+        zk_instance.restart.assert_called_once_with()
+
+    def test_restart_device_returns_false_when_sdk_fails(self):
+        with patch('main.ZKAccess', side_effect=Exception('restart failed')), patch(
+            'main.capture_exception'
+        ) as capture_exception, patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
+            'main.open',
+            mock_open(),
+        ):
+            result = main.restart_device('10.0.0.15', 4370, model='C3-400')
+
+        self.assertFalse(result)
+        capture_exception.assert_called_once()
+
+    def test_check_device_connects_without_reading_or_mutating_data(self):
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = MagicMock()
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context) as zkteco, patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()):
+            result = main.check_device('10.0.0.15', 4370, timeout=9000, model='C3-400')
+
+        self.assertTrue(result)
+        zkteco.assert_called_once_with(
+            connstr='protocol=TCP,ipaddress=10.0.0.15,port=4370,timeout=9000,passwd=',
+            device_model=main.ZK400,
+        )
+
+    def test_check_device_returns_false_when_sdk_fails(self):
+        with patch('main.ZKAccess', side_effect=Exception('health check failed')), patch(
+            'main.capture_exception'
+        ) as capture_exception, patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
+            'main.open',
+            mock_open(),
+        ):
+            result = main.check_device('10.0.0.15', 4370, model='C3-400')
+
+        self.assertFalse(result)
+        capture_exception.assert_called_once()
+
     def test_delete_user_retries_and_succeeds_on_second_attempt(self):
         successful_context = MagicMock()
         successful_context.__enter__.return_value = MagicMock()

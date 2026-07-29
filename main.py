@@ -254,3 +254,41 @@ def get_users(ip, port, timeout=10000, password='', model=None):
         return res
 
     return with_device_lock(ip, port, operation)
+
+
+def restart_device(ip, port=4370, timeout=10000, password='', model=None):
+    def operation():
+        connstr = build_connstr(ip, port, timeout, password)
+        device_model = resolve_device_model(model)
+
+        try:
+            write_output(f"[{get_local_time()}] Restarting device: {ip}:{port}")
+            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
+                zk.restart()
+
+            write_output(f"[{get_local_time()}] Restart command sent successfully: {ip}:{port}")
+            return True
+        except Exception as ex:
+            text = f"[{get_local_time()}] Exception when restarting device: {ip}:{port} - {str(ex)}"
+            write_output(text)
+            capture_exception(ex, device_ip=ip, operation='restart_device', port=port, model=model)
+            return False
+
+    return with_device_lock(ip, port, operation)
+
+
+def check_device(ip, port=4370, timeout=10000, password='', model=None):
+    def operation():
+        connstr = build_connstr(ip, port, timeout, password)
+        device_model = resolve_device_model(model)
+
+        try:
+            with ZKAccess(connstr=connstr, device_model=device_model):
+                return True
+        except Exception as ex:
+            text = f"[{get_local_time()}] Exception when checking device health: {ip}:{port} - {str(ex)}"
+            write_output(text)
+            capture_exception(ex, device_ip=ip, operation='check_device', port=port, model=model)
+            return False
+
+    return with_device_lock(ip, port, operation)

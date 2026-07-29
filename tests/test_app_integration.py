@@ -45,6 +45,76 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertTrue(response.get_json()['success'])
 
+    def test_restart_route_requires_bearer_token(self):
+        with patch('app.get_shared_secret', return_value='test-secret'):
+            response = self.client.post('/controller/restart/', json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+            })
+
+        self.assertEqual(401, response.status_code)
+        self.assertFalse(response.get_json()['success'])
+
+    def test_restart_route_forwards_controller_settings(self):
+        with patch('app.get_shared_secret', return_value='test-secret'), patch(
+            'app.restart_device',
+            return_value=True,
+        ) as restart_device:
+            response = self.client.post('/controller/restart/', headers={
+                'Authorization': 'Bearer test-secret',
+            }, json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+                'timeout': 9000,
+                'password': 'secret',
+                'model': 'C3-400',
+            })
+
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(response.get_json()['success'])
+        restart_device.assert_called_once_with(
+            ip='10.0.0.15',
+            port=4370,
+            timeout=9000,
+            password='secret',
+            model='C3-400',
+        )
+
+    def test_health_route_requires_bearer_token(self):
+        with patch('app.get_shared_secret', return_value='test-secret'):
+            response = self.client.post('/controller/health/', json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+            })
+
+        self.assertEqual(401, response.status_code)
+        self.assertFalse(response.get_json()['success'])
+
+    def test_health_route_checks_controller_with_bearer_token(self):
+        with patch('app.get_shared_secret', return_value='test-secret'), patch(
+            'app.check_device',
+            return_value=True,
+        ) as check_device:
+            response = self.client.post('/controller/health/', headers={
+                'Authorization': 'Bearer test-secret',
+            }, json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+                'timeout': 9000,
+                'password': 'secret',
+                'model': 'C3-400',
+            })
+
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(response.get_json()['success'])
+        check_device.assert_called_once_with(
+            ip='10.0.0.15',
+            port=4370,
+            timeout=9000,
+            password='secret',
+            model='C3-400',
+        )
+
     def test_ping_route_returns_ping_result(self):
         with patch('app.ping_host_endpoint', return_value=False) as ping_host_endpoint, patch(
             'app.get_local_time',
