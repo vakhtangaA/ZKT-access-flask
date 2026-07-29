@@ -8,4 +8,12 @@ cd "$repo_root"
 
 echo "Running Python integration tests before push..."
 
-python3 -m unittest discover -s tests -p 'test_*integration.py'
+python_bin="python3"
+
+if [ -x "$repo_root/.venv/bin/python" ]; then
+    python_bin="$repo_root/.venv/bin/python"
+elif [ -x "$repo_root/.venv/Scripts/python.exe" ]; then
+    python_bin="$repo_root/.venv/Scripts/python.exe"
+fi
+
+"$python_bin" -m unittest discover -s tests -p 'test_*integration.py'
