@@ -185,7 +185,7 @@ def health_controller():
     body = request.get_json(silent=True) or {}
     ip = body.get('ip')
     port = body.get('port', 4370)
-    timeout = body.get('timeout', 10000)
+    timeout = body.get('timeout', 5000)
     password = body.get('password', '')
     model = body.get('model')
 

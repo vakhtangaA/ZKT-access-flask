@@ -137,6 +137,28 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             model='C3-400',
         )
 
+    def test_health_route_uses_short_default_device_timeout(self):
+        with patch('app.get_shared_secret', return_value='test-secret'), patch(
+            'app.check_device',
+            return_value=True,
+        ) as check_device:
+            response = self.client.post('/controller/health/', headers={
+                'Authorization': 'Bearer test-secret',
+            }, json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+                'model': 'C3-400',
+            })
+
+        self.assertEqual(200, response.status_code)
+        check_device.assert_called_once_with(
+            ip='10.0.0.15',
+            port=4370,
+            timeout=5000,
+            password='',
+            model='C3-400',
+        )
+
     def test_ping_route_returns_ping_result(self):
         with patch('app.ping_host_endpoint', return_value=False) as ping_host_endpoint, patch(
             'app.get_local_time',
