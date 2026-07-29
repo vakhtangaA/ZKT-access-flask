@@ -13,13 +13,18 @@ import queue_manager
 
 
 class FlaskRouteIntegrationTest(unittest.TestCase):
+    AUTH_HEADERS = {'Authorization': 'Bearer test-secret'}
+
     @classmethod
     def setUpClass(cls):
         app_module.app.config['TESTING'] = True
         cls.client = app_module.app.test_client()
+        cls.shared_secret_patcher = patch('app.get_shared_secret', return_value='test-secret')
+        cls.shared_secret_patcher.start()
 
     @classmethod
     def tearDownClass(cls):
+        cls.shared_secret_patcher.stop()
         queue_manager.request_queue.put(None)
         queue_manager.thread.join(timeout=1)
 
@@ -28,7 +33,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             'app.open',
             mock_open(),
         ), patch('app.print'):
-            response = self.client.post('/controller/user/remove/', json={
+            response = self.client.post('/controller/user/remove/', headers=self.AUTH_HEADERS, json={
                 'card': '12345',
                 'pin': '54321',
                 'ip': '10.0.0.15',
@@ -44,6 +49,23 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
 
         self.assertEqual(200, response.status_code)
         self.assertTrue(response.get_json()['success'])
+
+    def test_controller_routes_require_bearer_token(self):
+        protected_routes = [
+            '/ping/',
+            '/controller/user/set/',
+            '/controller/user/remove/',
+            '/controller/users/',
+            '/controller/restart/',
+            '/controller/health/',
+        ]
+
+        for route in protected_routes:
+            with self.subTest(route=route):
+                response = self.client.post(route, json={})
+
+                self.assertEqual(401, response.status_code)
+                self.assertFalse(response.get_json()['success'])
 
     def test_restart_route_requires_bearer_token(self):
         with patch('app.get_shared_secret', return_value='test-secret'):
@@ -120,7 +142,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             'app.get_local_time',
             return_value='2026-04-17 00:00:00',
         ), patch('app.open', mock_open()), patch('app.print'):
-            response = self.client.post('/ping/', json={
+            response = self.client.post('/ping/', headers=self.AUTH_HEADERS, json={
                 'ip': '10.0.0.15',
             })
 
@@ -133,7 +155,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             'app.open',
             mock_open(),
         ), patch('app.print'):
-            response = self.client.post('/controller/user/set/', json={
+            response = self.client.post('/controller/user/set/', headers=self.AUTH_HEADERS, json={
                 'card': '12345',
                 'pin': '54321',
                 'ip': '10.0.0.15',
@@ -149,7 +171,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             'app.get_local_time',
             return_value='2026-04-17 00:00:00',
         ), patch('app.open', mock_open()), patch('app.print'):
-            response = self.client.post('/controller/user/remove/', json={
+            response = self.client.post('/controller/user/remove/', headers=self.AUTH_HEADERS, json={
                 'card': '12345',
                 'pin': '54321',
                 'ip': '10.0.0.15',
@@ -175,7 +197,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             'app.get_local_time',
             return_value='2026-04-17 00:00:00',
         ), patch('app.open', mock_open()), patch('app.print'):
-            response = self.client.post('/controller/user/set/', json={
+            response = self.client.post('/controller/user/set/', headers=self.AUTH_HEADERS, json={
                 'card': '12345',
                 'pin': '54321',
                 'ip': '10.0.0.15',
@@ -210,7 +232,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             'app.get_local_time',
             return_value='2026-04-17 00:00:00',
         ), patch('app.open', mock_open()), patch('app.print'):
-            response = self.client.post('/controller/users/', json={
+            response = self.client.post('/controller/users/', headers=self.AUTH_HEADERS, json={
                 'ip': '10.0.0.15',
                 'port': 4370,
                 'timeout': 10000,
@@ -233,7 +255,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             'app.get_local_time',
             return_value='2026-04-17 00:00:00',
         ), patch('app.open', mock_open()), patch('app.print'):
-            response = self.client.post('/controller/user/set/', json={
+            response = self.client.post('/controller/user/set/', headers=self.AUTH_HEADERS, json={
                 'card': '12345',
                 'pin': '54321',
                 'ip': '10.0.0.15',
@@ -262,7 +284,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             'app.get_local_time',
             return_value='2026-04-17 00:00:00',
         ), patch('app.open', mock_open()), patch('app.print'):
-            response = self.client.post('/controller/users/', json={
+            response = self.client.post('/controller/users/', headers=self.AUTH_HEADERS, json={
                 'ip': '10.0.0.15',
                 'port': 4370,
                 'timeout': 9000,
@@ -300,7 +322,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             'main.get_local_time',
             return_value='2026-04-17 00:00:00',
         ), patch('app.open', mock_open()), patch('main.open', mock_open()), patch('app.print'), patch('main.print'):
-            response = self.client.post('/controller/user/set/', json={
+            response = self.client.post('/controller/user/set/', headers=self.AUTH_HEADERS, json={
                 'card': '12345',
                 'pin': '54321',
                 'ip': '10.0.0.15',

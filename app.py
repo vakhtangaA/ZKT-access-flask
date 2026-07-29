@@ -18,10 +18,10 @@ def get_local_time():
 
 
 def get_shared_secret():
-    return (os.environ.get('ZKTECO_SHARED_SECRET') or os.environ.get('ZKT_SHARED_SECRET', '')).strip()
+    return os.environ.get('ZKTECO_SHARED_SECRET', '').strip()
 
 
-def restart_request_is_authorized():
+def controller_request_is_authorized():
     secret = get_shared_secret()
     authorization = request.headers.get('Authorization', '')
 
@@ -42,6 +42,12 @@ def home():
 
 @app.route('/ping/', methods = ['POST'])
 def ping_host():
+    if not controller_request_is_authorized():
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized controller request',
+        }), 401
+
     body = request.json
     ip = body.get('ip')
     res = ping_host_endpoint(ip)
@@ -55,6 +61,12 @@ def ping_host():
 
 @app.route('/controller/user/set/', methods = ['POST'])
 def set_user():
+    if not controller_request_is_authorized():
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized controller request',
+        }), 401
+
     body = request.json
     card = body.get('card')
     pin = body.get('pin')
@@ -78,6 +90,12 @@ def set_user():
     
 @app.route('/controller/user/remove/', methods = ['POST'])
 def remove_user():
+    if not controller_request_is_authorized():
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized controller request',
+        }), 401
+
     body = request.json
     card = body.get('card')
     pin = body.get('pin')
@@ -99,6 +117,12 @@ def remove_user():
     
 @app.route('/controller/users/', methods = ['POST'])
 def users():
+    if not controller_request_is_authorized():
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized controller request',
+        }), 401
+
     body = request.json
     ip = body.get('ip')
     port = body.get('port')
@@ -117,7 +141,7 @@ def users():
 
 @app.route('/controller/restart/', methods=['POST'])
 def restart_controller():
-    if not restart_request_is_authorized():
+    if not controller_request_is_authorized():
         return jsonify({
             'success': False,
             'message': 'Unauthorized restart request',
@@ -152,7 +176,7 @@ def restart_controller():
 
 @app.route('/controller/health/', methods=['POST'])
 def health_controller():
-    if not restart_request_is_authorized():
+    if not controller_request_is_authorized():
         return jsonify({
             'success': False,
             'message': 'Unauthorized health request',
