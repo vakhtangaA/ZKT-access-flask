@@ -3,6 +3,7 @@
 /env35
 /env38
 /env3932
+.venv/
 tests/__pycache__/
 __pycache__/
 *.pyc
