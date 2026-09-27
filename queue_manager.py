@@ -2,8 +2,10 @@ from queue import Queue
 from threading import Thread
 from device_locks import output_lock, with_device_lock
 from main import add_user as add_user_func
+from main import add_users as add_users_func
 from main import check_device as check_device_func
 from main import delete_user as delete_user_func
+from main import delete_users as delete_users_func
 from main import get_users as get_users_func
 from main import restart_device as restart_device_func
 
@@ -51,6 +53,22 @@ def add_user(card, pin, ip, port, doors=None, timeout=4000, password='', model=N
         ),
     )
 
+
+def add_users(users, ip, port=4370, timeout=4000, password='', model=None, operation_id=None):
+    return with_device_lock(
+        ip,
+        port,
+        lambda: add_users_func(
+            users,
+            ip,
+            port,
+            timeout=timeout,
+            password=password,
+            model=model,
+            operation_id=operation_id,
+        ),
+    )
+
 # Function to handle deleting a user
 def delete_user(card, pin, ip, port, timeout=4000, password='', model=None):
     return with_device_lock(
@@ -64,6 +82,21 @@ def delete_user(card, pin, ip, port, timeout=4000, password='', model=None):
             timeout=timeout,
             password=password,
             model=model,
+        ),
+    )
+
+def delete_users(users, ip, port=4370, timeout=4000, password='', model=None, operation_id=None):
+    return with_device_lock(
+        ip,
+        port,
+        lambda: delete_users_func(
+            users,
+            ip,
+            port,
+            timeout=timeout,
+            password=password,
+            model=model,
+            operation_id=operation_id,
         ),
     )
 

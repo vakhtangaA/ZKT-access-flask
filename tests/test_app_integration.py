@@ -55,6 +55,8 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             '/ping/',
             '/controller/user/set/',
             '/controller/user/remove/',
+            '/controller/users/set/',
+            '/controller/users/remove/',
             '/controller/users/',
             '/controller/restart/',
             '/controller/health/',
@@ -300,6 +302,157 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             password='secret',
             model='C3-400',
         )
+
+    def test_bulk_set_users_route_forwards_operation_and_returns_progress(self):
+        expected_result = {
+            'success': True,
+            'operation_id': 'operation-1',
+            'total': 2,
+            'succeeded': 2,
+            'failed': 0,
+            'results': [
+                {'card': '12345', 'pin': '54321', 'success': True},
+                {'card': '12346', 'pin': '54322', 'success': True},
+            ],
+        }
+
+        with patch('app.add_users', return_value=expected_result) as add_users, patch(
+            'app.get_shared_secret',
+            return_value='test-secret',
+        ):
+            response = self.client.post('/controller/users/set/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+                'model': 'C3-400',
+                'operation_id': 'operation-1',
+                'users': [
+                    {'card': '12345', 'pin': '54321', 'doors': [1, 3]},
+                    {'card': '12346', 'pin': '54322', 'doors': [2]},
+                ],
+            })
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(expected_result, response.get_json())
+        add_users.assert_called_once_with(
+            users=[
+                {'card': '12345', 'pin': '54321', 'doors': [1, 3]},
+                {'card': '12346', 'pin': '54322', 'doors': [2]},
+            ],
+            ip='10.0.0.15',
+            port=4370,
+            timeout=4000,
+            password='',
+            model='C3-400',
+            operation_id='operation-1',
+        )
+
+    def test_bulk_remove_users_route_forwards_operation_and_returns_progress(self):
+        expected_result = {
+            'success': True,
+            'operation_id': 'operation-9',
+            'total': 2,
+            'succeeded': 2,
+            'failed': 0,
+            'rewritten': 1,
+            'results': [
+                {'card': '12345', 'pin': '54321', 'success': True},
+                {'card': '12346', 'pin': '54322', 'success': True},
+            ],
+        }
+
+        with patch('app.delete_users', return_value=expected_result) as delete_users, patch(
+            'app.get_shared_secret',
+            return_value='test-secret',
+        ):
+            response = self.client.post('/controller/users/remove/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+                'model': 'C3-400',
+                'operation_id': 'operation-9',
+                'users': [
+                    {'card': '12345', 'pin': '54321', 'doors': [1]},
+                    {'card': '12346', 'pin': '54322'},
+                ],
+            })
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(expected_result, response.get_json())
+        delete_users.assert_called_once_with(
+            users=[
+                {'card': '12345', 'pin': '54321', 'doors': [1]},
+                {'card': '12346', 'pin': '54322'},
+            ],
+            ip='10.0.0.15',
+            port=4370,
+            timeout=4000,
+            password='',
+            model='C3-400',
+            operation_id='operation-9',
+        )
+
+    def test_bulk_remove_users_route_rejects_incomplete_payloads(self):
+        with patch('app.get_shared_secret', return_value='test-secret'):
+            missing_ip = self.client.post('/controller/users/remove/', headers=self.AUTH_HEADERS, json={
+                'users': [{'card': '12345', 'pin': '54321'}],
+            })
+            missing_card = self.client.post('/controller/users/remove/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'users': [{'pin': '54321'}],
+            })
+
+        self.assertEqual(422, missing_ip.status_code)
+        self.assertFalse(missing_ip.get_json()['success'])
+        self.assertEqual(422, missing_card.status_code)
+        self.assertEqual([0], missing_card.get_json()['invalid_indexes'])
+
+    def test_bulk_routes_reject_null_identifiers_and_malformed_doors(self):
+        users = [
+            {'card': None, 'pin': '54321'},
+            {'card': '12345', 'pin': None},
+            {'card': True, 'pin': '54321'},
+            {'card': '12345', 'pin': '54321', 'doors': 3},
+            {'card': '12345', 'pin': '54321', 'doors': ['1', '3']},
+            {'card': '12345', 'pin': '54321', 'doors': []},
+            {'card': '12345', 'pin': '54321', 'doors': [0]},
+            {'card': 12345, 'pin': 54321, 'doors': [1, 3]},
+            {'card': '12345', 'pin': '54321', 'doors': None},
+        ]
+
+        for route, target in (('/controller/users/set/', 'app.add_users'), ('/controller/users/remove/', 'app.delete_users')):
+            with self.subTest(route=route), patch(target) as batch_writer:
+                response = self.client.post(route, headers=self.AUTH_HEADERS, json={
+                    'ip': '10.0.0.15',
+                    'users': users,
+                })
+
+                self.assertEqual(422, response.status_code)
+                self.assertEqual([0, 1, 2, 3, 4, 5, 6], response.get_json()['invalid_indexes'])
+                batch_writer.assert_not_called()
+
+    def test_bulk_remove_users_route_reports_controller_failure_as_bad_gateway(self):
+        failed_result = {
+            'success': False,
+            'operation_id': 'operation-10',
+            'total': 1,
+            'succeeded': 0,
+            'failed': 1,
+            'rewritten': 0,
+            'message': 'Failed to remove users from controller',
+            'results': [{'card': '12345', 'pin': '54321', 'success': False, 'error': 'boom'}],
+        }
+
+        with patch('app.delete_users', return_value=failed_result), patch(
+            'app.get_shared_secret',
+            return_value='test-secret',
+        ):
+            response = self.client.post('/controller/users/remove/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'operation_id': 'operation-10',
+                'users': [{'card': '12345', 'pin': '54321'}],
+            })
+
+        self.assertEqual(502, response.status_code)
+        self.assertEqual(failed_result, response.get_json())
 
     def test_users_route_uses_queue_manager_bridge(self):
         with patch('queue_manager.get_users_func', return_value={'200': {'card': '100', 'pin': '200'}}) as get_users_func, patch(

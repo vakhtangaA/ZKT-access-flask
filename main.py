@@ -1,6 +1,7 @@
 from pyzkaccess import ZKAccess, ZK200, ZK100, ZK400
 from pyzkaccess.tables import User, UserAuthorize
 from datetime import datetime
+from uuid import uuid4
 import ping3
 import time
 import sys
@@ -19,6 +20,7 @@ MODEL_MAP = {
 }
 
 RETRY_DELAY_SECONDS = 0.5
+MAX_WRITE_ATTEMPTS = 2
 
 def get_local_time():
     tz = pytz.timezone('Asia/Tbilisi')
@@ -174,6 +176,260 @@ def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', mo
                 return False
 
         return True
+
+    return with_device_lock(ip, port, operation)
+
+
+def add_users(users, ip, port=4370, timeout=4000, password='', model=None, operation_id=None):
+    """Upsert multiple users and their door authorizations in one SDK session."""
+    operation_id = operation_id or str(uuid4())
+    normalized_users = list(users or [])
+
+    def operation():
+        started_at = time.monotonic()
+
+        if not normalized_users:
+            return {
+                'success': True,
+                'operation_id': operation_id,
+                'total': 0,
+                'succeeded': 0,
+                'failed': 0,
+                'results': [],
+            }
+
+        user_records = []
+        authorization_records = []
+        for item in normalized_users:
+            doors = item.get('doors')
+            door_access = (True, True, True, True) if not doors else (
+                1 in doors,
+                2 in doors,
+                3 in doors,
+                4 in doors,
+            )
+            user_records.append({
+                'card': str(item.get('card', '')),
+                'pin': str(item.get('pin', '')),
+                'start_time': datetime.now(),
+                'end_time': datetime(9999, 12, 31, 23, 59, 59),
+                'super_authorize': False,
+            })
+            authorization_records.append({
+                'pin': str(item.get('pin', '')),
+                'timezone_id': 1,
+                'doors': door_access,
+            })
+
+        last_exception = None
+        for attempt in range(1, MAX_WRITE_ATTEMPTS + 1):
+            try:
+                print(f"[{get_local_time()}] Batch {operation_id} writing {len(normalized_users)} users to {ip} attempt {attempt}")
+                with ZKAccess(
+                    connstr=build_connstr(ip, port, timeout, password),
+                    device_model=resolve_device_model(model),
+                ) as zk:
+                    zk.table('User').upsert(user_records)
+                    zk.table('UserAuthorize').upsert(authorization_records)
+
+                elapsed_ms = int(round((time.monotonic() - started_at) * 1000))
+                results = [
+                    {
+                        'card': item.get('card'),
+                        'pin': item.get('pin'),
+                        'success': True,
+                    }
+                    for item in normalized_users
+                ]
+                write_output(
+                    f"[{get_local_time()}] Batch {operation_id} completed on {ip}: "
+                    f"{len(normalized_users)} users in {elapsed_ms} ms"
+                )
+                return {
+                    'success': True,
+                    'operation_id': operation_id,
+                    'total': len(results),
+                    'succeeded': len(results),
+                    'failed': 0,
+                    'elapsed_ms': elapsed_ms,
+                    'results': results,
+                }
+            except Exception as exception:
+                last_exception = exception
+                if attempt < MAX_WRITE_ATTEMPTS:
+                    retry_delay = RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                    write_output(
+                        f"[{get_local_time()}] Batch {operation_id} failed on {ip} "
+                        f"attempt {attempt}; retrying in {retry_delay}s: {exception}"
+                    )
+                    time.sleep(retry_delay)
+
+        elapsed_ms = int(round((time.monotonic() - started_at) * 1000))
+        error_message = str(last_exception) if last_exception else 'Unknown batch write failure'
+        capture_exception(
+            last_exception or RuntimeError(error_message),
+            device_ip=ip,
+            operation='add_users',
+            port=port,
+            model=model,
+        )
+        results = [
+            {
+                'card': item.get('card'),
+                'pin': item.get('pin'),
+                'success': False,
+                'error': error_message,
+            }
+            for item in normalized_users
+        ]
+        return {
+            'success': False,
+            'operation_id': operation_id,
+            'total': len(results),
+            'succeeded': 0,
+            'failed': len(results),
+            'elapsed_ms': elapsed_ms,
+            'message': 'Failed to write users to controller',
+            'results': results,
+        }
+
+    return with_device_lock(ip, port, operation)
+
+
+def delete_users(users, ip, port=4370, timeout=4000, password='', model=None, operation_id=None):
+    """Remove multiple users in one SDK session, narrowing the ones that keep some doors.
+
+    An item without `doors` is deleted from the device. An item with `doors` keeps its user
+    record and only has its door mask overwritten, which is how a user keeps entrance access
+    after losing the elevator. `userauthorize` is keyed by Pin and AuthorizeTimezoneId, so the
+    upsert replaces the mask in place; a failed write never leaves the user off the device.
+    """
+    operation_id = operation_id or str(uuid4())
+    normalized_users = list(users or [])
+
+    def operation():
+        started_at = time.monotonic()
+
+        if not normalized_users:
+            return {
+                'success': True,
+                'operation_id': operation_id,
+                'total': 0,
+                'succeeded': 0,
+                'failed': 0,
+                'rewritten': 0,
+                'results': [],
+            }
+
+        delete_records = []
+        rewrite_user_records = []
+        rewrite_authorization_records = []
+        for item in normalized_users:
+            card = str(item.get('card', ''))
+            pin = str(item.get('pin', ''))
+            doors = item.get('doors')
+
+            if not doors:
+                delete_records.append({
+                    'card': card,
+                    'pin': pin,
+                    'super_authorize': True,
+                })
+                continue
+
+            rewrite_user_records.append({
+                'card': card,
+                'pin': pin,
+                'start_time': datetime.now(),
+                'end_time': datetime(9999, 12, 31, 23, 59, 59),
+                'super_authorize': False,
+            })
+            rewrite_authorization_records.append({
+                'pin': pin,
+                'timezone_id': 1,
+                'doors': (1 in doors, 2 in doors, 3 in doors, 4 in doors),
+            })
+
+        last_exception = None
+        for attempt in range(1, MAX_WRITE_ATTEMPTS + 1):
+            try:
+                print(
+                    f"[{get_local_time()}] Batch {operation_id} removing {len(delete_records)} users "
+                    f"and narrowing {len(rewrite_user_records)} on {ip} attempt {attempt}"
+                )
+                with ZKAccess(
+                    connstr=build_connstr(ip, port, timeout, password),
+                    device_model=resolve_device_model(model),
+                ) as zk:
+                    if delete_records:
+                        zk.table('User').delete(delete_records)
+
+                    if rewrite_user_records:
+                        zk.table('User').upsert(rewrite_user_records)
+                        zk.table('UserAuthorize').upsert(rewrite_authorization_records)
+
+                elapsed_ms = int(round((time.monotonic() - started_at) * 1000))
+                results = [
+                    {
+                        'card': item.get('card'),
+                        'pin': item.get('pin'),
+                        'success': True,
+                    }
+                    for item in normalized_users
+                ]
+                write_output(
+                    f"[{get_local_time()}] Batch {operation_id} removed {len(results)} users on {ip} "
+                    f"({len(rewrite_user_records)} rewritten) in {elapsed_ms} ms"
+                )
+                return {
+                    'success': True,
+                    'operation_id': operation_id,
+                    'total': len(results),
+                    'succeeded': len(results),
+                    'failed': 0,
+                    'rewritten': len(rewrite_user_records),
+                    'elapsed_ms': elapsed_ms,
+                    'results': results,
+                }
+            except Exception as exception:
+                last_exception = exception
+                if attempt < MAX_WRITE_ATTEMPTS:
+                    retry_delay = RETRY_DELAY_SECONDS * (2 ** (attempt - 1))
+                    write_output(
+                        f"[{get_local_time()}] Batch {operation_id} removal failed on {ip} "
+                        f"attempt {attempt}; retrying in {retry_delay}s: {exception}"
+                    )
+                    time.sleep(retry_delay)
+
+        elapsed_ms = int(round((time.monotonic() - started_at) * 1000))
+        error_message = str(last_exception) if last_exception else 'Unknown batch removal failure'
+        capture_exception(
+            last_exception or RuntimeError(error_message),
+            device_ip=ip,
+            operation='delete_users',
+            port=port,
+            model=model,
+        )
+        results = [
+            {
+                'card': item.get('card'),
+                'pin': item.get('pin'),
+                'success': False,
+                'error': error_message,
+            }
+            for item in normalized_users
+        ]
+        return {
+            'success': False,
+            'operation_id': operation_id,
+            'total': len(results),
+            'succeeded': 0,
+            'failed': len(results),
+            'rewritten': 0,
+            'elapsed_ms': elapsed_ms,
+            'message': 'Failed to remove users from controller',
+            'results': results,
+        }
 
     return with_device_lock(ip, port, operation)
 
