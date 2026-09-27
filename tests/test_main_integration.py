@@ -199,6 +199,194 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual(2, zkteco.call_count)
         capture_exception.assert_called_once()
 
+    def test_add_users_upserts_user_and_authorization_records_in_one_connection(self):
+        zk_instance = MagicMock()
+        user_table = MagicMock()
+        authorization_table = MagicMock()
+        zk_instance.table.side_effect = lambda name: {
+            'User': user_table,
+            'UserAuthorize': authorization_table,
+        }[name]
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        users = [
+            {'card': '12345', 'pin': '54321', 'doors': [1, 3]},
+            {'card': '12346', 'pin': '54322', 'doors': [2]},
+        ]
+
+        with patch('main.ZKAccess', return_value=successful_context) as zkteco, patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = main.add_users(
+                users,
+                '10.0.0.15',
+                4370,
+                timeout=9000,
+                model='C3-400',
+                operation_id='operation-1',
+            )
+
+        self.assertTrue(result['success'])
+        self.assertEqual('operation-1', result['operation_id'])
+        self.assertEqual(2, result['succeeded'])
+        self.assertEqual(1, zkteco.call_count)
+        zk_instance.table.assert_any_call('User')
+        zk_instance.table.assert_any_call('UserAuthorize')
+        user_table.upsert.assert_called_once()
+        authorization_table.upsert.assert_called_once()
+
+    def test_add_users_retries_only_after_a_failed_sdk_operation(self):
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = MagicMock()
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', side_effect=[Exception('temporary failure'), successful_context]) as zkteco, patch(
+            'main.time.sleep'
+        ) as sleep, patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
+            'main.open',
+            mock_open(),
+        ), patch('main.print'):
+            result = main.add_users(
+                [{'card': '12345', 'pin': '54321'}],
+                '10.0.0.15',
+                4370,
+                operation_id='operation-2',
+            )
+
+        self.assertTrue(result['success'])
+        self.assertEqual(2, zkteco.call_count)
+        sleep.assert_called_once_with(0.5)
+
+    def test_delete_users_deletes_records_and_narrows_kept_doors_in_one_connection(self):
+        zk_instance = MagicMock()
+        user_table = MagicMock()
+        authorization_table = MagicMock()
+        zk_instance.table.side_effect = lambda name: {
+            'User': user_table,
+            'UserAuthorize': authorization_table,
+        }[name]
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        users = [
+            {'card': '12345', 'pin': '54321', 'doors': [1]},
+            {'card': '12346', 'pin': '54322'},
+        ]
+
+        with patch('main.ZKAccess', return_value=successful_context) as zkteco, patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = main.delete_users(
+                users,
+                '10.0.0.15',
+                4370,
+                timeout=9000,
+                model='C3-400',
+                operation_id='operation-9',
+            )
+
+        self.assertTrue(result['success'])
+        self.assertEqual('operation-9', result['operation_id'])
+        self.assertEqual(2, result['succeeded'])
+        self.assertEqual(1, result['rewritten'])
+        self.assertEqual(1, zkteco.call_count)
+
+        # A user who keeps doors is never deleted, so a failed write cannot drop them from the device.
+        deleted_records = user_table.delete.call_args[0][0]
+        self.assertEqual(['54322'], [record['pin'] for record in deleted_records])
+
+        rewritten_records = user_table.upsert.call_args[0][0]
+        self.assertEqual(['54321'], [record['pin'] for record in rewritten_records])
+        self.assertEqual(
+            [(True, False, False, False)],
+            [record['doors'] for record in authorization_table.upsert.call_args[0][0]],
+        )
+
+    def test_delete_users_does_not_rewrite_when_no_doors_are_kept(self):
+        zk_instance = MagicMock()
+        user_table = MagicMock()
+        authorization_table = MagicMock()
+        zk_instance.table.side_effect = lambda name: {
+            'User': user_table,
+            'UserAuthorize': authorization_table,
+        }[name]
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context), patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = main.delete_users(
+                [{'card': '12345', 'pin': '54321'}],
+                '10.0.0.15',
+                4370,
+                operation_id='operation-10',
+            )
+
+        self.assertTrue(result['success'])
+        self.assertEqual(0, result['rewritten'])
+        user_table.delete.assert_called_once()
+        user_table.upsert.assert_not_called()
+        authorization_table.upsert.assert_not_called()
+
+    def test_delete_users_keeps_the_user_on_the_device_when_narrowing_fails(self):
+        zk_instance = MagicMock()
+        user_table = MagicMock()
+        authorization_table = MagicMock()
+        authorization_table.upsert.side_effect = Exception('write failed')
+        zk_instance.table.side_effect = lambda name: {
+            'User': user_table,
+            'UserAuthorize': authorization_table,
+        }[name]
+        failing_context = MagicMock()
+        failing_context.__enter__.return_value = zk_instance
+        failing_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=failing_context), patch('main.time.sleep'), patch(
+            'main.capture_exception'
+        ), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
+            'main.open',
+            mock_open(),
+        ), patch('main.print'):
+            result = main.delete_users(
+                [{'card': '12345', 'pin': '54321', 'doors': [1]}],
+                '10.0.0.15',
+                4370,
+                operation_id='operation-12',
+            )
+
+        self.assertFalse(result['success'])
+        user_table.delete.assert_not_called()
+
+    def test_delete_users_reports_every_card_as_failed_after_exhausting_retries(self):
+        with patch('main.ZKAccess', side_effect=Exception('device offline')) as zkteco, patch(
+            'main.time.sleep'
+        ) as sleep, patch('main.capture_exception') as capture_exception, patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = main.delete_users(
+                [{'card': '12345', 'pin': '54321'}, {'card': '12346', 'pin': '54322'}],
+                '10.0.0.15',
+                4370,
+                operation_id='operation-11',
+            )
+
+        self.assertFalse(result['success'])
+        self.assertEqual(2, result['failed'])
+        self.assertEqual(0, result['succeeded'])
+        self.assertTrue(all(item['success'] is False for item in result['results']))
+        self.assertEqual(main.MAX_WRITE_ATTEMPTS, zkteco.call_count)
+        sleep.assert_called_once_with(0.5)
+        capture_exception.assert_called_once()
+
     def test_add_user_serializes_same_device_requests_when_called_directly(self):
         state = {
             'current': 0,
