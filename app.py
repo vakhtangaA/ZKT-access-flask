@@ -4,7 +4,7 @@ import os
 from device_locks import output_lock
 from main import ping_host_endpoint
 from observability import initialize_sentry
-from queue_manager import add_user, add_users, check_device, delete_user, delete_users, get_users, restart_device
+from queue_manager import add_user, add_users, check_device, delete_user, delete_users, get_users, get_users_with_doors, restart_device
 import sys
 from datetime import datetime
 import pytz
@@ -254,6 +254,43 @@ def users():
         "users": res,
     })
 
+
+
+@app.route('/controller/users/doors/', methods=['POST'])
+def users_with_doors():
+    if not controller_request_is_authorized():
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized controller request',
+        }), 401
+
+    body = request.get_json(silent=True) or {}
+    ip = body.get('ip')
+
+    if not ip:
+        return jsonify({
+            'success': False,
+            'message': 'The controller IP is required',
+        }), 422
+
+    res = get_users_with_doors(
+        ip,
+        body.get('port', 4370),
+        timeout=body.get('timeout', 10000),
+        password=body.get('password', ''),
+        model=body.get('model'),
+    )
+
+    if res is None:
+        return jsonify({
+            'success': False,
+            'message': 'Could not read users from the controller',
+        }), 502
+
+    return jsonify({
+        'success': True,
+        'users': res,
+    })
 
 @app.route('/controller/restart/', methods=['POST'])
 def restart_controller():
