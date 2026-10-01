@@ -19,6 +19,18 @@ class ObservabilityIntegrationTest(unittest.TestCase):
         ):
             self.assertFalse(observability.initialize_sentry())
 
+    def test_initialize_sentry_stays_off_without_a_configured_dsn(self):
+        sentry_sdk = MagicMock()
+
+        with patch.dict('os.environ', {}, clear=True), patch.object(observability, 'sentry_sdk', sentry_sdk), patch.object(
+            observability,
+            'FlaskIntegration',
+            MagicMock(),
+        ):
+            self.assertFalse(observability.initialize_sentry())
+
+        sentry_sdk.init.assert_not_called()
+
     def test_initialize_sentry_bootstraps_sdk_when_dsn_is_present(self):
         sentry_sdk = MagicMock()
         flask_integration = MagicMock(return_value='flask-integration')

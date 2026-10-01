@@ -357,8 +357,8 @@ def health_controller():
     )
 
     return jsonify({
-        'success': bool(result),
-        'message': 'Device is reachable' if result else 'Device health check failed',
+        'success': result['online'],
+        'message': 'Device is reachable' if result['online'] else (result['error'] or 'Device health check failed'),
     }), 200
 
 if __name__ == '__main__':

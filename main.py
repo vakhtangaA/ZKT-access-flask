@@ -580,17 +580,20 @@ def restart_device(ip, port=4370, timeout=10000, password='', model=None):
 
 
 def check_device(ip, port=4370, timeout=10000, password='', model=None):
+    """Report whether the controller accepts a connection, and the SDK error when it does not.
+
+    An unreachable controller is an expected outcome rather than a bug, so it is not sent to Sentry.
+    """
     def operation():
         connstr = build_connstr(ip, port, timeout, password)
         device_model = resolve_device_model(model)
 
         try:
             with ZKAccess(connstr=connstr, device_model=device_model):
-                return True
+                return {'online': True, 'error': None}
         except Exception as ex:
             text = f"[{get_local_time()}] Exception when checking device health: {ip}:{port} - {str(ex)}"
             write_output(text)
-            capture_exception(ex, device_ip=ip, operation='check_device', port=port, model=model)
-            return False
+            return {'online': False, 'error': str(ex)}
 
     return with_device_lock(ip, port, operation)

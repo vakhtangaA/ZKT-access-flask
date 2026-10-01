@@ -69,14 +69,14 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         ), patch('main.open', mock_open()):
             result = main.check_device('10.0.0.15', 4370, timeout=9000, model='C3-400')
 
-        self.assertTrue(result)
+        self.assertEqual({'online': True, 'error': None}, result)
         zkteco.assert_called_once_with(
             connstr='protocol=TCP,ipaddress=10.0.0.15,port=4370,timeout=9000,passwd=',
             device_model=main.ZK400,
         )
 
-    def test_check_device_returns_false_when_sdk_fails(self):
-        with patch('main.ZKAccess', side_effect=Exception('health check failed')), patch(
+    def test_check_device_reports_the_sdk_error_without_sending_it_to_sentry(self):
+        with patch('main.ZKAccess', side_effect=Exception('SDK error -307: Connection attempt failed')), patch(
             'main.capture_exception'
         ) as capture_exception, patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
             'main.open',
@@ -84,8 +84,8 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         ):
             result = main.check_device('10.0.0.15', 4370, model='C3-400')
 
-        self.assertFalse(result)
-        capture_exception.assert_called_once()
+        self.assertEqual({'online': False, 'error': 'SDK error -307: Connection attempt failed'}, result)
+        capture_exception.assert_not_called()
 
     def test_delete_user_retries_and_succeeds_on_second_attempt(self):
         successful_context = MagicMock()

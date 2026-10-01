@@ -9,7 +9,6 @@ except ImportError:  # pragma: no cover - exercised when dependency is not insta
 
 
 TRUTHY_VALUES = {'1', 'true', 'yes', 'on'}
-DEFAULT_SENTRY_DSN = 'https://1217eef052a5412d32e9be184428749e@o4510356635910144.ingest.de.sentry.io/4511242078453840'
 DEFAULT_SEND_DEFAULT_PII = True
 
 
@@ -28,7 +27,8 @@ def parse_float(value, default=0.0):
 
 
 def initialize_sentry():
-    dsn = os.getenv('SENTRY_DSN', DEFAULT_SENTRY_DSN)
+    """Sentry stays off unless SENTRY_DSN is set, so local runs and tests never report to production."""
+    dsn = os.getenv('SENTRY_DSN', '').strip()
 
     if not dsn or sentry_sdk is None or FlaskIntegration is None:
         return False

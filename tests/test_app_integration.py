@@ -155,7 +155,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
     def test_health_route_checks_controller_with_bearer_token(self):
         with patch('app.get_shared_secret', return_value='test-secret'), patch(
             'app.check_device',
-            return_value=True,
+            return_value={'online': True, 'error': None},
         ) as check_device:
             response = self.client.post('/controller/health/', headers={
                 'Authorization': 'Bearer test-secret',
@@ -180,7 +180,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
     def test_health_route_uses_short_default_device_timeout(self):
         with patch('app.get_shared_secret', return_value='test-secret'), patch(
             'app.check_device',
-            return_value=True,
+            return_value={'online': True, 'error': None},
         ) as check_device:
             response = self.client.post('/controller/health/', headers={
                 'Authorization': 'Bearer test-secret',
@@ -198,6 +198,24 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             password='',
             model='C3-400',
         )
+
+    def test_health_route_returns_the_device_error_as_the_message(self):
+        with patch('app.get_shared_secret', return_value='test-secret'), patch(
+            'app.check_device',
+            return_value={'online': False, 'error': 'SDK error -307: Connection attempt failed'},
+        ):
+            response = self.client.post('/controller/health/', headers={
+                'Authorization': 'Bearer test-secret',
+            }, json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+            })
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual({
+            'success': False,
+            'message': 'SDK error -307: Connection attempt failed',
+        }, response.get_json())
 
     def test_ping_route_returns_ping_result(self):
         with patch('app.ping_host_endpoint', return_value=False) as ping_host_endpoint, patch(
