@@ -43,6 +43,43 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         self.assertEqual(200, response.status_code)
         self.assertFalse(response.get_json()['success'])
 
+    def test_users_with_doors_route_returns_users_and_their_doors(self):
+        expected_users = {
+            '200': {'card': '100', 'pin': '200', 'doors': [1, 3]},
+        }
+
+        with patch('app.get_users_with_doors', return_value=expected_users) as get_users_with_doors:
+            response = self.client.post('/controller/users/doors/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+                'model': 'C3-400',
+            })
+
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(response.get_json()['success'])
+        self.assertEqual(expected_users, response.get_json()['users'])
+        get_users_with_doors.assert_called_once_with(
+            '10.0.0.15',
+            4370,
+            timeout=10000,
+            password='',
+            model='C3-400',
+        )
+
+    def test_users_with_doors_route_reports_unreadable_device(self):
+        with patch('app.get_users_with_doors', return_value=None):
+            response = self.client.post('/controller/users/doors/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+            })
+
+        self.assertEqual(502, response.status_code)
+        self.assertFalse(response.get_json()['success'])
+
+    def test_users_with_doors_route_requires_ip(self):
+        response = self.client.post('/controller/users/doors/', headers=self.AUTH_HEADERS, json={})
+
+        self.assertEqual(422, response.status_code)
+
     def test_home_route_returns_success(self):
         with patch('app.get_local_time', return_value='2026-04-17 00:00:00'), patch('app.open', mock_open()), patch('app.print'):
             response = self.client.get('/')
@@ -58,6 +95,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             '/controller/users/set/',
             '/controller/users/remove/',
             '/controller/users/',
+            '/controller/users/doors/',
             '/controller/restart/',
             '/controller/health/',
         ]

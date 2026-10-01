@@ -148,6 +148,53 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(2, zkteco.call_count)
 
+    def test_get_users_with_doors_merges_door_masks_per_pin(self):
+        zk_instance = MagicMock()
+        tables = {
+            'UserAuthorize': [
+                MagicMock(pin='200', doors=iter((True, False, True, False))),
+                MagicMock(pin='200', doors=iter((False, False, False, True))),
+                MagicMock(pin='201', doors=iter((False, False, False, False))),
+            ],
+            'User': [
+                MagicMock(pin='200', card='100'),
+                MagicMock(pin='201', card='101'),
+                MagicMock(pin='202', card='102'),
+            ],
+        }
+        zk_instance.table.side_effect = lambda name: tables[name]
+
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context), patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = main.get_users_with_doors('10.0.0.15', 4370)
+
+        self.assertEqual(
+            {
+                '200': {'card': '100', 'pin': '200', 'doors': [1, 3, 4]},
+                '201': {'card': '101', 'pin': '201', 'doors': []},
+                '202': {'card': '102', 'pin': '202', 'doors': []},
+            },
+            result,
+        )
+
+    def test_get_users_with_doors_returns_none_after_two_failures(self):
+        with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]) as zkteco, patch(
+            'main.capture_exception',
+        ) as capture_exception, patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
+            'main.time.sleep',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = main.get_users_with_doors('10.0.0.15', 4370)
+
+        self.assertIsNone(result)
+        self.assertEqual(2, zkteco.call_count)
+        capture_exception.assert_called_once()
+
     def test_get_users_returns_empty_dict_after_two_failures(self):
         with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]) as zkteco, patch(
             'main.ping_host',

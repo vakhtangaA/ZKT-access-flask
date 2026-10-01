@@ -512,6 +512,52 @@ def get_users(ip, port, timeout=10000, password='', model=None):
     return with_device_lock(ip, port, operation)
 
 
+def get_users_with_doors(ip, port, timeout=10000, password='', model=None):
+    """Return every user on the device with the door numbers (1-4) its card may open.
+
+    Returns None when the device could not be read, so an unreachable device is not
+    mistaken for one without users.
+    """
+    def read_users(zk):
+        doors_by_pin = {}
+        for authorization in zk.table('UserAuthorize'):
+            allowed = doors_by_pin.setdefault(authorization.pin, set())
+            for door_number, is_allowed in enumerate(list(authorization.doors), start=1):
+                if is_allowed:
+                    allowed.add(door_number)
+
+        return {
+            record.pin: {
+                'card': record.card,
+                'pin': record.pin,
+                'doors': sorted(doors_by_pin.get(record.pin, set())),
+            }
+            for record in zk.table('User')
+        }
+
+    def operation():
+        connstr = build_connstr(ip, port, timeout, password)
+        device_model = resolve_device_model(model)
+        last_exception = None
+
+        for attempt in range(1, MAX_WRITE_ATTEMPTS + 1):
+            try:
+                write_output(f"[{get_local_time()}] TRY #{attempt} GETTING USERS WITH DOORS ON DEVICE: {ip}")
+                with ZKAccess(connstr=connstr, device_model=device_model) as zk:
+                    return read_users(zk)
+            except Exception as exception:
+                last_exception = exception
+                if attempt < MAX_WRITE_ATTEMPTS:
+                    log_retry_attempt('Getting users with doors', ip, attempt, exception)
+
+        write_output(f"[{get_local_time()}] Exception when retrieving users with doors! Device: {ip} - {last_exception}")
+        capture_exception(last_exception, device_ip=ip, operation='get_users_with_doors', port=port, model=model)
+
+        return None
+
+    return with_device_lock(ip, port, operation)
+
+
 def restart_device(ip, port=4370, timeout=10000, password='', model=None):
     def operation():
         connstr = build_connstr(ip, port, timeout, password)
