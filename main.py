@@ -114,6 +114,31 @@ def write_log_success(text):
             logFile.write('\n')
             logFile.close()
 
+def write_user_authorization(zk, pin, door_access, ip):
+    """Overwrite the door mask of a pin and log what the controller reports back.
+
+    The read-back separates a write the controller ignored from one it applied and later
+    replaced: the first logs the old mask here, the second logs the new one.
+    """
+    try:
+        zk.table('UserAuthorize').where(pin=pin).delete_all()
+    except Exception as exception:
+        write_output(f"[{get_local_time()}] Could not clear authorization rows of pin {pin} on {ip}: {exception}")
+
+    zk.table('UserAuthorize').upsert([{'pin': pin, 'timezone_id': 1, 'doors': door_access}])
+    print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
+    write_output(f"[{get_local_time()}] Authorized To Doors: {door_access}")
+
+    try:
+        stored = [
+            {'timezone_id': row.timezone_id, 'doors': [number for number, allowed in enumerate(list(row.doors), start=1) if allowed]}
+            for row in zk.table('UserAuthorize').where(pin=pin)
+        ]
+        write_output(f"[{get_local_time()}] Controller reports authorization of pin {pin} on {ip} after write: {stored}")
+    except Exception as exception:
+        write_output(f"[{get_local_time()}] Could not read back authorization of pin {pin} on {ip}: {exception}")
+
+
 def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', model=None):
     def operation():
         print(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip}")
@@ -134,14 +159,7 @@ def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', mo
                 print(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS")
                 write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS")
 
-                try:
-                    zk.table('UserAuthorize').where(pin=pin).delete_all()
-                except:
-                    pass
-
-                zk.table('UserAuthorize').upsert([{'pin': pin, 'timezone_id': 1, 'doors': door_access}])
-                print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
-                write_output(f"[{get_local_time()}] Authorized To Doors: {door_access}")
+                write_user_authorization(zk, pin, door_access, ip)
 
             return True
         except Exception as ex:
@@ -156,14 +174,7 @@ def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', mo
                     print(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS ON TRY #2")
                     write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS ON TRY #2")
 
-                    try:
-                        zk.table('UserAuthorize').where(pin=pin).delete_all()
-                    except:
-                        pass
-
-                    zk.table('UserAuthorize').upsert([{'pin': pin, 'timezone_id': 1, 'doors': door_access}])
-                    print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
-                    write_output(f"[{get_local_time()}] Authorized To Doors: {door_access}")
+                    write_user_authorization(zk, pin, door_access, ip)
 
                 return True
             except Exception as ex:
