@@ -1,4 +1,6 @@
 from pyzkaccess import ZKAccess, ZK200, ZK100, ZK400
+from pyzkaccess.common import ZKDatetimeUtils
+from pyzkaccess.enums import EVENT_TYPES
 from pyzkaccess.tables import User, UserAuthorize
 from datetime import datetime
 from uuid import uuid4
@@ -570,6 +572,68 @@ def get_users_with_doors(ip, port, timeout=10000, password='', model=None):
 
         write_output(f"[{get_local_time()}] Exception when retrieving users with doors! Device: {ip} - {last_exception}")
         capture_exception(last_exception, device_ip=ip, operation='get_users_with_doors', port=port, model=model)
+
+        return None
+
+    return with_device_lock(ip, port, operation)
+
+
+def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None, card=None, limit=50):
+    """Return the newest access events the controller logged for a pin or card.
+
+    Each event keeps the raw event code next to its name, so a denied tap (23) can be told
+    apart from an opened door (0) per door number. Returns None when the device could not be read.
+    """
+    def read_events(zk):
+        query = zk.table('Transaction')
+        if pin:
+            query = query.where(pin=str(pin))
+        if card:
+            query = query.where(card=str(card))
+
+        events = []
+        for record in query:
+            raw = record.raw_data
+            try:
+                event_code = int(raw.get('EventType'))
+            except (TypeError, ValueError):
+                event_code = None
+
+            try:
+                event_time = ZKDatetimeUtils.zkctime_to_datetime(raw.get('Time_second')).strftime('%Y-%m-%d %H:%M:%S')
+            except Exception:
+                event_time = None
+
+            events.append({
+                'time': event_time,
+                'pin': raw.get('Pin'),
+                'card': raw.get('Cardno'),
+                'door': raw.get('DoorID'),
+                'event_code': event_code,
+                'event': EVENT_TYPES[event_code].__doc__ if event_code in EVENT_TYPES else 'Unknown event',
+            })
+
+        events.sort(key=lambda event: event['time'] or '', reverse=True)
+
+        return events[:limit]
+
+    def operation():
+        connstr = build_connstr(ip, port, timeout, password)
+        device_model = resolve_device_model(model)
+        last_exception = None
+
+        for attempt in range(1, MAX_WRITE_ATTEMPTS + 1):
+            try:
+                write_output(f"[{get_local_time()}] TRY #{attempt} GETTING TRANSACTIONS ON DEVICE: {ip}")
+                with ZKAccess(connstr=connstr, device_model=device_model) as zk:
+                    return read_events(zk)
+            except Exception as exception:
+                last_exception = exception
+                if attempt < MAX_WRITE_ATTEMPTS:
+                    log_retry_attempt('Getting transactions', ip, attempt, exception)
+
+        write_output(f"[{get_local_time()}] Exception when retrieving transactions! Device: {ip} - {last_exception}")
+        capture_exception(last_exception, device_ip=ip, operation='get_transactions', port=port, model=model)
 
         return None
 

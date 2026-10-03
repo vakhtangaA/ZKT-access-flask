@@ -1,3 +1,4 @@
+from datetime import datetime
 import pathlib
 import sys
 import threading
@@ -206,6 +207,46 @@ class MainDeviceIntegrationTest(unittest.TestCase):
 
         self.assertIsNone(result)
         self.assertEqual(2, zkteco.call_count)
+        capture_exception.assert_called_once()
+
+    def test_get_transactions_returns_newest_events_with_codes_and_names(self):
+        zk_instance = MagicMock()
+        older = MagicMock(raw_data={'EventType': '0', 'Time_second': '1', 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '1'})
+        newer = MagicMock(raw_data={'EventType': '23', 'Time_second': '2', 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '2'})
+        zk_instance.table.return_value.where.return_value = [older, newer]
+
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context), patch(
+            'main.ZKDatetimeUtils.zkctime_to_datetime',
+            side_effect=lambda value: datetime(2026, 10, 3, 23, 0, int(value)),
+        ), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch('main.open', mock_open()), patch('main.print'):
+            result = main.get_transactions('10.0.0.15', 4370, pin='500080', limit=1)
+
+        zk_instance.table.assert_called_with('Transaction')
+        self.assertEqual(
+            [{
+                'time': '2026-10-03 23:00:02',
+                'pin': '500080',
+                'card': '504438413',
+                'door': '2',
+                'event_code': 23,
+                'event': 'Access Denied',
+            }],
+            result,
+        )
+
+    def test_get_transactions_returns_none_after_two_failures(self):
+        with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]), patch(
+            'main.capture_exception',
+        ) as capture_exception, patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
+            'main.time.sleep',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = main.get_transactions('10.0.0.15', 4370, pin='500080')
+
+        self.assertIsNone(result)
         capture_exception.assert_called_once()
 
     def test_get_users_returns_empty_dict_after_two_failures(self):

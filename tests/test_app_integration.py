@@ -80,6 +80,51 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
 
         self.assertEqual(422, response.status_code)
 
+    def test_transactions_route_returns_events_for_a_pin(self):
+        expected_events = [
+            {'time': '2026-10-03 23:50:00', 'pin': '500080', 'card': '504438413', 'door': '2', 'event_code': 23, 'event': 'Access Denied'},
+        ]
+
+        with patch('app.get_transactions', return_value=expected_events) as get_transactions:
+            response = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'port': 4370,
+                'model': 'C3-400',
+                'pin': '500080',
+                'limit': 10,
+            })
+
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(response.get_json()['success'])
+        self.assertEqual(expected_events, response.get_json()['transactions'])
+        get_transactions.assert_called_once_with(
+            '10.0.0.15',
+            4370,
+            timeout=10000,
+            password='',
+            model='C3-400',
+            pin='500080',
+            card=None,
+            limit=10,
+        )
+
+    def test_transactions_route_requires_ip_and_a_pin_or_card(self):
+        no_ip = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'pin': '500080'})
+        no_identity = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'ip': '10.0.0.15'})
+
+        self.assertEqual(422, no_ip.status_code)
+        self.assertEqual(422, no_identity.status_code)
+
+    def test_transactions_route_reports_unreadable_device(self):
+        with patch('app.get_transactions', return_value=None):
+            response = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'pin': '500080',
+            })
+
+        self.assertEqual(502, response.status_code)
+        self.assertFalse(response.get_json()['success'])
+
     def test_home_route_returns_success(self):
         with patch('app.get_local_time', return_value='2026-04-17 00:00:00'), patch('app.open', mock_open()), patch('app.print'):
             response = self.client.get('/')
@@ -96,6 +141,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             '/controller/users/remove/',
             '/controller/users/',
             '/controller/users/doors/',
+            '/controller/transactions/',
             '/controller/restart/',
             '/controller/health/',
         ]

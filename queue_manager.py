@@ -6,6 +6,7 @@ from main import add_users as add_users_func
 from main import check_device as check_device_func
 from main import delete_user as delete_user_func
 from main import delete_users as delete_users_func
+from main import get_transactions as get_transactions_func
 from main import get_users as get_users_func
 from main import get_users_with_doors as get_users_with_doors_func
 from main import restart_device as restart_device_func
@@ -127,6 +128,22 @@ def get_users_with_doors(ip, port, timeout=10000, password='', model=None):
             timeout=timeout,
             password=password,
             model=model,
+        ),
+    )
+
+def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None, card=None, limit=50):
+    return with_device_lock(
+        ip,
+        port,
+        lambda: get_transactions_func(
+            ip,
+            port,
+            timeout=timeout,
+            password=password,
+            model=model,
+            pin=pin,
+            card=card,
+            limit=limit,
         ),
     )
 

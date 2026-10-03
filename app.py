@@ -4,7 +4,7 @@ import os
 from device_locks import output_lock
 from main import ping_host_endpoint
 from observability import initialize_sentry
-from queue_manager import add_user, add_users, check_device, delete_user, delete_users, get_users, get_users_with_doors, restart_device
+from queue_manager import add_user, add_users, check_device, delete_user, delete_users, get_transactions, get_users, get_users_with_doors, restart_device
 import sys
 from datetime import datetime
 import pytz
@@ -291,6 +291,63 @@ def users_with_doors():
         'success': True,
         'users': res,
     })
+
+@app.route('/controller/transactions/', methods=['POST'])
+def transactions():
+    if not controller_request_is_authorized():
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized controller request',
+        }), 401
+
+    body = request.get_json(silent=True) or {}
+    ip = body.get('ip')
+
+    if not ip:
+        return jsonify({
+            'success': False,
+            'message': 'The controller IP is required',
+        }), 422
+
+    pin = body.get('pin')
+    card = body.get('card')
+
+    if not pin and not card:
+        return jsonify({
+            'success': False,
+            'message': 'A pin or a card is required',
+        }), 422
+
+    try:
+        limit = max(1, min(int(body.get('limit', 50)), 500))
+    except (TypeError, ValueError):
+        return jsonify({
+            'success': False,
+            'message': 'The limit must be a number',
+        }), 422
+
+    res = get_transactions(
+        ip,
+        body.get('port', 4370),
+        timeout=body.get('timeout', 10000),
+        password=body.get('password', ''),
+        model=body.get('model'),
+        pin=pin,
+        card=card,
+        limit=limit,
+    )
+
+    if res is None:
+        return jsonify({
+            'success': False,
+            'message': 'Could not read transactions from the controller',
+        }), 502
+
+    return jsonify({
+        'success': True,
+        'transactions': res,
+    })
+
 
 @app.route('/controller/restart/', methods=['POST'])
 def restart_controller():
