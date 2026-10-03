@@ -520,17 +520,26 @@ def get_users_with_doors(ip, port, timeout=10000, password='', model=None):
     """
     def read_users(zk):
         doors_by_pin = {}
+        authorizations_by_pin = {}
         for authorization in zk.table('UserAuthorize'):
             allowed = doors_by_pin.setdefault(authorization.pin, set())
-            for door_number, is_allowed in enumerate(list(authorization.doors), start=1):
-                if is_allowed:
-                    allowed.add(door_number)
+            row_doors = [
+                door_number
+                for door_number, is_allowed in enumerate(list(authorization.doors), start=1)
+                if is_allowed
+            ]
+            allowed.update(row_doors)
+            authorizations_by_pin.setdefault(authorization.pin, []).append({
+                'timezone_id': getattr(authorization, 'timezone_id', None),
+                'doors': row_doors,
+            })
 
         return {
             record.pin: {
                 'card': record.card,
                 'pin': record.pin,
                 'doors': sorted(doors_by_pin.get(record.pin, set())),
+                'authorizations': authorizations_by_pin.get(record.pin, []),
             }
             for record in zk.table('User')
         }

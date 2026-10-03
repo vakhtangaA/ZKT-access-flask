@@ -152,9 +152,9 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         zk_instance = MagicMock()
         tables = {
             'UserAuthorize': [
-                MagicMock(pin='200', doors=iter((True, False, True, False))),
-                MagicMock(pin='200', doors=iter((False, False, False, True))),
-                MagicMock(pin='201', doors=iter((False, False, False, False))),
+                MagicMock(pin='200', timezone_id=1, doors=iter((True, False, True, False))),
+                MagicMock(pin='200', timezone_id=2, doors=iter((False, False, False, True))),
+                MagicMock(pin='201', timezone_id=1, doors=iter((False, False, False, False))),
             ],
             'User': [
                 MagicMock(pin='200', card='100'),
@@ -176,9 +176,22 @@ class MainDeviceIntegrationTest(unittest.TestCase):
 
         self.assertEqual(
             {
-                '200': {'card': '100', 'pin': '200', 'doors': [1, 3, 4]},
-                '201': {'card': '101', 'pin': '201', 'doors': []},
-                '202': {'card': '102', 'pin': '202', 'doors': []},
+                '200': {
+                    'card': '100',
+                    'pin': '200',
+                    'doors': [1, 3, 4],
+                    'authorizations': [
+                        {'timezone_id': 1, 'doors': [1, 3]},
+                        {'timezone_id': 2, 'doors': [4]},
+                    ],
+                },
+                '201': {
+                    'card': '101',
+                    'pin': '201',
+                    'doors': [],
+                    'authorizations': [{'timezone_id': 1, 'doors': []}],
+                },
+                '202': {'card': '102', 'pin': '202', 'doors': [], 'authorizations': []},
             },
             result,
         )
