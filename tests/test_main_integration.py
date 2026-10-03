@@ -149,13 +149,22 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(2, zkteco.call_count)
 
-    def test_get_users_with_doors_merges_door_masks_per_pin(self):
+    def test_door_numbers_from_mask_reads_every_bit(self):
+        self.assertEqual([], main.door_numbers_from_mask('0'))
+        self.assertEqual([1], main.door_numbers_from_mask('1'))
+        self.assertEqual([1, 3], main.door_numbers_from_mask('5'))
+        self.assertEqual([4], main.door_numbers_from_mask('8'))
+        self.assertEqual([1, 2, 3, 4], main.door_numbers_from_mask('15'))
+        self.assertEqual([], main.door_numbers_from_mask(None))
+        self.assertEqual([], main.door_numbers_from_mask(''))
+
+    def test_get_users_with_doors_decodes_the_raw_mask_and_merges_rows_per_pin(self):
         zk_instance = MagicMock()
         tables = {
             'UserAuthorize': [
-                MagicMock(pin='200', timezone_id=1, doors=iter((True, False, True, False))),
-                MagicMock(pin='200', timezone_id=2, doors=iter((False, False, False, True))),
-                MagicMock(pin='201', timezone_id=1, doors=iter((False, False, False, False))),
+                MagicMock(pin='200', timezone_id=1, raw_data={'AuthorizeDoorId': '5'}),
+                MagicMock(pin='200', timezone_id=2, raw_data={'AuthorizeDoorId': '8'}),
+                MagicMock(pin='201', timezone_id=1, raw_data={'AuthorizeDoorId': '0'}),
             ],
             'User': [
                 MagicMock(pin='200', card='100'),
@@ -182,15 +191,15 @@ class MainDeviceIntegrationTest(unittest.TestCase):
                     'pin': '200',
                     'doors': [1, 3, 4],
                     'authorizations': [
-                        {'timezone_id': 1, 'doors': [1, 3]},
-                        {'timezone_id': 2, 'doors': [4]},
+                        {'timezone_id': 1, 'mask': '5', 'doors': [1, 3]},
+                        {'timezone_id': 2, 'mask': '8', 'doors': [4]},
                     ],
                 },
                 '201': {
                     'card': '101',
                     'pin': '201',
                     'doors': [],
-                    'authorizations': [{'timezone_id': 1, 'doors': []}],
+                    'authorizations': [{'timezone_id': 1, 'mask': '0', 'doors': []}],
                 },
                 '202': {'card': '102', 'pin': '202', 'doors': [], 'authorizations': []},
             },
