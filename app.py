@@ -312,12 +312,6 @@ def transactions():
     pin = body.get('pin')
     card = body.get('card')
 
-    if not pin and not card:
-        return jsonify({
-            'success': False,
-            'message': 'A pin or a card is required',
-        }), 422
-
     try:
         limit = max(1, min(int(body.get('limit', 50)), 500))
     except (TypeError, ValueError):

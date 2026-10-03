@@ -108,12 +108,26 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             limit=10,
         )
 
-    def test_transactions_route_requires_ip_and_a_pin_or_card(self):
-        no_ip = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'pin': '500080'})
-        no_identity = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'ip': '10.0.0.15'})
+    def test_transactions_route_requires_ip(self):
+        response = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'pin': '500080'})
 
-        self.assertEqual(422, no_ip.status_code)
-        self.assertEqual(422, no_identity.status_code)
+        self.assertEqual(422, response.status_code)
+
+    def test_transactions_route_lists_every_event_without_a_pin_or_card(self):
+        with patch('app.get_transactions', return_value=[]) as get_transactions:
+            response = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'ip': '10.0.0.15'})
+
+        self.assertEqual(200, response.status_code)
+        get_transactions.assert_called_once_with(
+            '10.0.0.15',
+            4370,
+            timeout=10000,
+            password='',
+            model=None,
+            pin=None,
+            card=None,
+            limit=50,
+        )
 
     def test_transactions_route_reports_unreadable_device(self):
         with patch('app.get_transactions', return_value=None):
