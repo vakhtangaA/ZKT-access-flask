@@ -320,6 +320,17 @@ def transactions():
             'message': 'The limit must be a number',
         }), 422
 
+    event_codes = body.get('event_codes')
+
+    if event_codes is not None:
+        try:
+            event_codes = [int(code) for code in event_codes]
+        except (TypeError, ValueError):
+            return jsonify({
+                'success': False,
+                'message': 'The event_codes must be a list of event numbers',
+            }), 422
+
     res = get_transactions(
         ip,
         body.get('port', 4370),
@@ -329,6 +340,7 @@ def transactions():
         pin=pin,
         card=card,
         limit=limit,
+        event_codes=event_codes,
     )
 
     if res is None:

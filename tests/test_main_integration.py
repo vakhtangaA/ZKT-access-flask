@@ -267,6 +267,21 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual([], unmatched)
         self.assertEqual(['10603', '561', '20541'], [event['pin'] for event in everything])
 
+    def test_get_transactions_keeps_only_the_requested_event_types(self):
+        records = [
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '1', 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '1'}),
+            MagicMock(raw_data={'EventType': '23', 'Time_second': '2', 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '2'}),
+            MagicMock(raw_data={'EventType': '27', 'Time_second': '3', 'Pin': '', 'Cardno': '111', 'DoorID': '1'}),
+        ]
+
+        denied = self._transactions_result(records, event_codes=[23])
+        denied_or_unregistered = self._transactions_result(records, event_codes=[23, 27])
+        everything = self._transactions_result(records, event_codes=[])
+
+        self.assertEqual([23], [event['event_code'] for event in denied])
+        self.assertEqual([27, 23], [event['event_code'] for event in denied_or_unregistered])
+        self.assertEqual(3, len(everything))
+
     def test_get_transactions_returns_none_after_two_failures(self):
         with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]), patch(
             'main.capture_exception',

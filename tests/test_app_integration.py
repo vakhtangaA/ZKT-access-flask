@@ -106,6 +106,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             pin='500080',
             card=None,
             limit=10,
+            event_codes=None,
         )
 
     def test_transactions_route_requires_ip(self):
@@ -127,6 +128,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             pin=None,
             card=None,
             limit=50,
+            event_codes=None,
         )
 
     def test_transactions_route_reports_unreadable_device(self):
@@ -138,6 +140,22 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
 
         self.assertEqual(502, response.status_code)
         self.assertFalse(response.get_json()['success'])
+
+    def test_transactions_route_passes_event_codes_and_rejects_bad_ones(self):
+        with patch('app.get_transactions', return_value=[]) as get_transactions:
+            accepted = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'event_codes': [23, '27'],
+            })
+            rejected = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'event_codes': ['denied'],
+            })
+
+        self.assertEqual(200, accepted.status_code)
+        self.assertEqual([23, 27], get_transactions.call_args.kwargs['event_codes'])
+        self.assertEqual(422, rejected.status_code)
+        get_transactions.assert_called_once()
 
     def test_home_route_returns_success(self):
         with patch('app.get_local_time', return_value='2026-04-17 00:00:00'), patch('app.open', mock_open()), patch('app.print'):
