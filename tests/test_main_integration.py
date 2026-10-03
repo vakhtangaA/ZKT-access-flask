@@ -209,11 +209,11 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual(2, zkteco.call_count)
         capture_exception.assert_called_once()
 
-    def test_get_transactions_returns_newest_events_with_codes_and_names(self):
+    def _transactions_result(self, records, **filters):
         zk_instance = MagicMock()
-        older = MagicMock(raw_data={'EventType': '0', 'Time_second': '1', 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '1'})
-        newer = MagicMock(raw_data={'EventType': '23', 'Time_second': '2', 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '2'})
-        zk_instance.table.return_value.where.return_value = [older, newer]
+        transaction_table = MagicMock()
+        transaction_table.__iter__.side_effect = lambda: iter(records)
+        zk_instance.table.return_value = transaction_table
 
         successful_context = MagicMock()
         successful_context.__enter__.return_value = zk_instance
@@ -223,9 +223,21 @@ class MainDeviceIntegrationTest(unittest.TestCase):
             'main.ZKDatetimeUtils.zkctime_to_datetime',
             side_effect=lambda value: datetime(2026, 10, 3, 23, 0, int(value)),
         ), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch('main.open', mock_open()), patch('main.print'):
-            result = main.get_transactions('10.0.0.15', 4370, pin='500080', limit=1)
+            result = main.get_transactions('10.0.0.15', 4370, **filters)
 
         zk_instance.table.assert_called_with('Transaction')
+        zk_instance.table.return_value.where.assert_not_called()
+
+        return result
+
+    def test_get_transactions_returns_newest_events_with_codes_and_names(self):
+        records = [
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '1', 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '1'}),
+            MagicMock(raw_data={'EventType': '23', 'Time_second': '2', 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '2'}),
+        ]
+
+        result = self._transactions_result(records, pin='500080', limit=1)
+
         self.assertEqual(
             [{
                 'time': '2026-10-03 23:00:02',
@@ -237,6 +249,23 @@ class MainDeviceIntegrationTest(unittest.TestCase):
             }],
             result,
         )
+
+    def test_get_transactions_matches_card_and_pin_here_and_not_on_the_controller(self):
+        records = [
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '1', 'Pin': '20541', 'Cardno': '2409341497', 'DoorID': '2'}),
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '2', 'Pin': '561', 'Cardno': '2410329641', 'DoorID': '2'}),
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '3', 'Pin': '10603', 'Cardno': '3110348897', 'DoorID': '1'}),
+        ]
+
+        by_card = self._transactions_result(records, card=' 2409341497 ')
+        by_pin = self._transactions_result(records, pin='561')
+        unmatched = self._transactions_result(records, card='999')
+        everything = self._transactions_result(records)
+
+        self.assertEqual(['20541'], [event['pin'] for event in by_card])
+        self.assertEqual(['2410329641'], [event['card'] for event in by_pin])
+        self.assertEqual([], unmatched)
+        self.assertEqual(['10603', '561', '20541'], [event['pin'] for event in everything])
 
     def test_get_transactions_returns_none_after_two_failures(self):
         with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]), patch(

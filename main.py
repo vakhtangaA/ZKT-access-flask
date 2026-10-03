@@ -582,18 +582,28 @@ def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None,
     """Return the newest access events the controller logged for a pin or card.
 
     Each event keeps the raw event code next to its name, so a denied tap (23) can be told
-    apart from an opened door (0) per door number. Returns None when the device could not be read.
+    apart from an opened door (0) per door number. The whole table is read and then matched
+    here, so a pin or card search costs the same as an unfiltered one. Returns None when the
+    device could not be read.
     """
     def read_events(zk):
-        query = zk.table('Transaction')
-        if pin:
-            query = query.where(pin=str(pin))
-        if card:
-            query = query.where(card=str(card))
-
+        wanted_pin = str(pin).strip() if pin else None
+        wanted_card = str(card).strip() if card else None
         events = []
-        for record in query:
+        total = 0
+
+        # The pin and card are matched here and not sent to the controller as an SDK condition:
+        # the controller returned nothing for a card that its own unfiltered log contains.
+        for record in zk.table('Transaction'):
+            total += 1
             raw = record.raw_data
+
+            if wanted_pin and str(raw.get('Pin', '')).strip() != wanted_pin:
+                continue
+
+            if wanted_card and str(raw.get('Cardno', '')).strip() != wanted_card:
+                continue
+
             try:
                 event_code = int(raw.get('EventType'))
             except (TypeError, ValueError):
@@ -614,6 +624,7 @@ def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None,
             })
 
         events.sort(key=lambda event: event['time'] or '', reverse=True)
+        write_output(f"[{get_local_time()}] Read {total} transactions from {ip}, {len(events)} matched pin={wanted_pin} card={wanted_card}")
 
         return events[:limit]
 
