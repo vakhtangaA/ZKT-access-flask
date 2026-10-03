@@ -230,10 +230,10 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         successful_context = MagicMock()
         successful_context.__enter__.return_value = zk_instance
         successful_context.__exit__.return_value = False
-        user_authorize = MagicMock()
-        user_authorize.with_zk.return_value = user_authorize
+        authorization_table = MagicMock()
+        zk_instance.table.side_effect = lambda name: authorization_table if name == 'UserAuthorize' else MagicMock()
 
-        with patch('main.ZKAccess', return_value=successful_context), patch('main.UserAuthorize', return_value=user_authorize) as authorize_class, patch(
+        with patch('main.ZKAccess', return_value=successful_context), patch('main.User', return_value=MagicMock()), patch(
             'main.get_local_time',
             return_value='2026-04-17 00:00:00',
         ), patch(
@@ -243,7 +243,9 @@ class MainDeviceIntegrationTest(unittest.TestCase):
             result = main.add_user('12345', '54321', '10.0.0.15', 4370, [1, 3])
 
         self.assertTrue(result)
-        authorize_class.assert_called_once_with(pin='54321', timezone_id=1, doors=(True, False, True, False))
+        authorization_table.upsert.assert_called_once_with(
+            [{'pin': '54321', 'timezone_id': 1, 'doors': (True, False, True, False)}]
+        )
 
     def test_add_user_reports_to_sentry_after_two_failed_attempts(self):
         with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]) as zkteco, patch(

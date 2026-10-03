@@ -139,8 +139,7 @@ def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', mo
                 except:
                     pass
 
-                userAuthorize = UserAuthorize(pin=pin, timezone_id=1, doors=door_access).with_zk(zk)
-                userAuthorize.save()
+                zk.table('UserAuthorize').upsert([{'pin': pin, 'timezone_id': 1, 'doors': door_access}])
                 print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
                 write_output(f"[{get_local_time()}] Authorized To Doors: {door_access}")
 
@@ -162,8 +161,7 @@ def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', mo
                     except:
                         pass
 
-                    userAuthorize = UserAuthorize(pin=pin, timezone_id=1, doors=door_access).with_zk(zk)
-                    userAuthorize.save()
+                    zk.table('UserAuthorize').upsert([{'pin': pin, 'timezone_id': 1, 'doors': door_access}])
                     print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
                     write_output(f"[{get_local_time()}] Authorized To Doors: {door_access}")
 
