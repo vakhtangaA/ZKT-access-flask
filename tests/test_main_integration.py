@@ -12,6 +12,15 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import main
+from pyzkaccess.tables import UserAuthorize
+
+
+def authorization_row(pin, timezone_id, mask):
+    return UserAuthorize().with_raw_data({
+        'Pin': pin,
+        'AuthorizeTimezoneId': str(timezone_id),
+        'AuthorizeDoorId': mask,
+    })
 
 
 class MainDeviceIntegrationTest(unittest.TestCase):
@@ -149,22 +158,24 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(2, zkteco.call_count)
 
-    def test_door_numbers_from_mask_reads_every_bit(self):
-        self.assertEqual([], main.door_numbers_from_mask('0'))
-        self.assertEqual([1], main.door_numbers_from_mask('1'))
-        self.assertEqual([1, 3], main.door_numbers_from_mask('5'))
-        self.assertEqual([4], main.door_numbers_from_mask('8'))
-        self.assertEqual([1, 2, 3, 4], main.door_numbers_from_mask('15'))
-        self.assertEqual([], main.door_numbers_from_mask(None))
-        self.assertEqual([], main.door_numbers_from_mask(''))
+    def test_pyzkaccess_decodes_every_door_bit(self):
+        # pyzkaccess < 1.2 reported all four doors for every mask; this fails on those versions.
+        def doors_of(mask):
+            return main.allowed_door_numbers(authorization_row('1', 1, mask).doors)
+
+        self.assertEqual([], doors_of('0'))
+        self.assertEqual([1], doors_of('1'))
+        self.assertEqual([1, 3], doors_of('5'))
+        self.assertEqual([4], doors_of('8'))
+        self.assertEqual([1, 2, 3, 4], doors_of('15'))
 
     def test_get_users_with_doors_decodes_the_raw_mask_and_merges_rows_per_pin(self):
         zk_instance = MagicMock()
         tables = {
             'UserAuthorize': [
-                MagicMock(pin='200', timezone_id=1, raw_data={'AuthorizeDoorId': '5'}),
-                MagicMock(pin='200', timezone_id=2, raw_data={'AuthorizeDoorId': '8'}),
-                MagicMock(pin='201', timezone_id=1, raw_data={'AuthorizeDoorId': '0'}),
+                authorization_row('200', 1, '5'),
+                authorization_row('200', 2, '8'),
+                authorization_row('201', 1, '0'),
             ],
             'User': [
                 MagicMock(pin='200', card='100'),
@@ -382,6 +393,27 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         authorization_table.upsert.assert_called_once_with(
             [{'pin': '54321', 'timezone_id': 1, 'doors': (True, False, True, False)}]
         )
+
+    def _written_door_access(self, doors):
+        zk_instance = MagicMock()
+        authorization_table = MagicMock()
+        zk_instance.table.side_effect = lambda name: authorization_table if name == 'UserAuthorize' else MagicMock()
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context), patch('main.User', return_value=MagicMock()), patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            main.add_user('12345', '54321', '10.0.0.15', 4370, doors)
+
+        return authorization_table.upsert.call_args.args[0][0]['doors']
+
+    def test_add_user_grants_every_door_only_when_no_doors_are_given(self):
+        self.assertEqual((True, True, True, True), self._written_door_access(None))
+        self.assertEqual((False, False, False, False), self._written_door_access([]))
+        self.assertEqual((False, True, False, True), self._written_door_access([2, 4]))
 
     def test_add_user_reports_to_sentry_after_two_failed_attempts(self):
         with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]) as zkteco, patch(
@@ -615,15 +647,10 @@ class MainDeviceIntegrationTest(unittest.TestCase):
 
         fake_user = MagicMock()
         fake_user.with_zk.return_value = fake_user
-        fake_user_authorize = MagicMock()
-        fake_user_authorize.with_zk.return_value = fake_user_authorize
 
         with patch('main.ZKAccess', side_effect=lambda *args, **kwargs: FakeZkContext()), patch(
             'main.User',
             return_value=fake_user,
-        ), patch(
-            'main.UserAuthorize',
-            return_value=fake_user_authorize,
         ), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch('main.open', mock_open()), patch(
             'main.print'
         ):

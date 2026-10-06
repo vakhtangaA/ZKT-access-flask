@@ -1,7 +1,7 @@
 from pyzkaccess import ZKAccess, ZK200, ZK100, ZK400
 from pyzkaccess.common import ZKDatetimeUtils
 from pyzkaccess.enums import EVENT_TYPES
-from pyzkaccess.tables import User, UserAuthorize
+from pyzkaccess.tables import User
 from datetime import datetime
 from uuid import uuid4
 import ping3
@@ -116,26 +116,16 @@ def write_log_success(text):
             logFile.write('\n')
             logFile.close()
 
-def door_numbers_from_mask(raw_mask):
-    """Return the door numbers (1-4) whose bit is set in a controller AuthorizeDoorId mask.
-
-    The mask is decoded here from the raw value. pyzkaccess's UserAuthorize.doors decodes it with
-    bool() over the characters of the binary string, and bool('0') is True, so it reports all
-    four doors for every mask.
-    """
-    try:
-        mask = int(raw_mask)
-    except (TypeError, ValueError):
-        return []
-
-    return [door_number for door_number in range(1, 5) if mask & (1 << (door_number - 1))]
+def allowed_door_numbers(doors):
+    """Return the door numbers (1-4) set in a UserAuthorize.doors tuple."""
+    return [door_number for door_number, allowed in enumerate(doors, start=1) if allowed]
 
 
 def write_user_authorization(zk, pin, door_access, ip):
-    """Overwrite the door mask of a pin and log what the controller reports back.
+    """Overwrite the door mask of a pin, clearing any other rows the pin has first.
 
-    The read-back separates a write the controller ignored from one it applied and later
-    replaced: the first logs the old mask here, the second logs the new one.
+    Rows left under another timezone would add their doors to the mask we write, so they are
+    removed. A failure to clear them is logged and the mask is still written.
     """
     try:
         zk.table('UserAuthorize').where(pin=pin).delete_all()
@@ -146,15 +136,6 @@ def write_user_authorization(zk, pin, door_access, ip):
     print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
     write_output(f"[{get_local_time()}] Authorized To Doors: {door_access}")
 
-    try:
-        stored = [
-            {'timezone_id': row.timezone_id, 'doors': door_numbers_from_mask(row.raw_data.get('AuthorizeDoorId'))}
-            for row in zk.table('UserAuthorize').where(pin=pin)
-        ]
-        write_output(f"[{get_local_time()}] Controller reports authorization of pin {pin} on {ip} after write: {stored}")
-    except Exception as exception:
-        write_output(f"[{get_local_time()}] Could not read back authorization of pin {pin} on {ip}: {exception}")
-
 
 def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', model=None):
     def operation():
@@ -163,10 +144,10 @@ def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', mo
         connstr = build_connstr(ip, port, timeout, password)
         device_model = resolve_device_model(model)
 
-        if doors:
-            door_access = (1 in doors, 2 in doors, 3 in doors, 4 in doors)
-        else:
+        if doors is None:
             door_access = (True, True, True, True)
+        else:
+            door_access = (1 in doors, 2 in doors, 3 in doors, 4 in doors)
 
         try:
             with ZKAccess(connstr=connstr, device_model=device_model) as zk:
@@ -228,7 +209,7 @@ def add_users(users, ip, port=4370, timeout=4000, password='', model=None, opera
         authorization_records = []
         for item in normalized_users:
             doors = item.get('doors')
-            door_access = (True, True, True, True) if not doors else (
+            door_access = (True, True, True, True) if doors is None else (
                 1 in doors,
                 2 in doors,
                 3 in doors,
@@ -549,7 +530,7 @@ def get_users_with_doors(ip, port, timeout=10000, password='', model=None):
         authorizations_by_pin = {}
         for authorization in zk.table('UserAuthorize'):
             raw_mask = authorization.raw_data.get('AuthorizeDoorId')
-            row_doors = door_numbers_from_mask(raw_mask)
+            row_doors = allowed_door_numbers(authorization.doors)
             doors_by_pin.setdefault(authorization.pin, set()).update(row_doors)
             authorizations_by_pin.setdefault(authorization.pin, []).append({
                 'timezone_id': getattr(authorization, 'timezone_id', None),

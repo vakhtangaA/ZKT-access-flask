@@ -161,6 +161,20 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         self.assertEqual(422, rejected.status_code)
         get_transactions.assert_called_once()
 
+    def test_set_user_route_rejects_doors_that_would_not_mean_a_specific_set(self):
+        for doors in ([], '1', [0], [True], {'1': 1}):
+            with self.subTest(doors=doors), patch('app.add_user') as add_user:
+                response = self.client.post('/controller/user/set/', headers=self.AUTH_HEADERS, json={
+                    'card': '12345',
+                    'pin': '54321',
+                    'ip': '10.0.0.15',
+                    'doors': doors,
+                })
+
+                self.assertEqual(422, response.status_code)
+                self.assertFalse(response.get_json()['success'])
+                add_user.assert_not_called()
+
     def test_transactions_route_passes_dates_and_rejects_bad_ones(self):
         with patch('app.get_transactions', return_value=[]) as get_transactions:
             accepted = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={
@@ -638,17 +652,12 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         successful_context = MagicMock()
         successful_context.__enter__.return_value = zk_instance
         successful_context.__exit__.return_value = False
-        user_authorize = MagicMock()
-        user_authorize.with_zk.return_value = user_authorize
         user = MagicMock()
         user.with_zk.return_value = user
 
         with patch('main.ZKAccess', return_value=successful_context) as zkteco, patch(
             'main.User',
             return_value=user,
-        ), patch(
-            'main.UserAuthorize',
-            return_value=user_authorize,
         ), patch('app.get_local_time', return_value='2026-04-17 00:00:00'), patch(
             'main.get_local_time',
             return_value='2026-04-17 00:00:00',

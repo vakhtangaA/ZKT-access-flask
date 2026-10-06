@@ -112,6 +112,13 @@ def set_user():
     timeout = body.get('timeout')
     password = body.get('password')
     model = body.get('model')
+
+    if not is_door_list(doors):
+        return jsonify({
+            'success': False,
+            'message': 'The doors must be omitted for every door, or a non-empty list of door numbers',
+        }), 422
+
     print(f"[{get_local_time()}] Recieved request to add user with card: {card} and pin: {pin}")
     with output_lock:
         with open('output.txt', 'a') as output:
