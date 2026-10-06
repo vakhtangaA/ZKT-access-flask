@@ -1,3 +1,6 @@
 flask
-pyzkaccess
+pyzkaccess==1.2
 sentry-sdk[flask]
+ping3
+pytz
+waitress
