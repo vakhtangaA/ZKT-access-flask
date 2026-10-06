@@ -131,7 +131,7 @@ def get_users_with_doors(ip, port, timeout=10000, password='', model=None):
         ),
     )
 
-def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None, card=None, limit=50, event_codes=None):
+def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None, card=None, limit=50, event_codes=None, date_from=None, date_to=None):
     return with_device_lock(
         ip,
         port,
@@ -145,6 +145,8 @@ def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None,
             card=card,
             limit=limit,
             event_codes=event_codes,
+            date_from=date_from,
+            date_to=date_to,
         ),
     )
 

@@ -107,6 +107,8 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             card=None,
             limit=10,
             event_codes=None,
+            date_from=None,
+            date_to=None,
         )
 
     def test_transactions_route_requires_ip(self):
@@ -129,6 +131,8 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             card=None,
             limit=50,
             event_codes=None,
+            date_from=None,
+            date_to=None,
         )
 
     def test_transactions_route_reports_unreadable_device(self):
@@ -155,6 +159,24 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         self.assertEqual(200, accepted.status_code)
         self.assertEqual([23, 27], get_transactions.call_args.kwargs['event_codes'])
         self.assertEqual(422, rejected.status_code)
+        get_transactions.assert_called_once()
+
+    def test_transactions_route_passes_dates_and_rejects_bad_ones(self):
+        with patch('app.get_transactions', return_value=[]) as get_transactions:
+            accepted = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'date_from': '2026-10-01',
+                'date_to': '2026-10-03 12:00:00',
+            })
+            rejected = [
+                self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'ip': '10.0.0.15', 'date_from': value})
+                for value in ('yesterday', '2026-13-40', '01.10.2026')
+            ]
+
+        self.assertEqual(200, accepted.status_code)
+        self.assertEqual('2026-10-01', get_transactions.call_args.kwargs['date_from'])
+        self.assertEqual('2026-10-03 12:00:00', get_transactions.call_args.kwargs['date_to'])
+        self.assertEqual([422, 422, 422], [response.status_code for response in rejected])
         get_transactions.assert_called_once()
 
     def test_home_route_returns_success(self):

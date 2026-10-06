@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 import hmac
 import os
 from device_locks import output_lock
-from main import ping_host_endpoint
+from main import event_time_bound, ping_host_endpoint
 from observability import initialize_sentry
 from queue_manager import add_user, add_users, check_device, delete_user, delete_users, get_transactions, get_users, get_users_with_doors, restart_device
 import sys
@@ -320,6 +320,18 @@ def transactions():
             'message': 'The limit must be a number',
         }), 422
 
+    date_from = body.get('date_from')
+    date_to = body.get('date_to')
+
+    try:
+        event_time_bound(date_from, end_of_day=False)
+        event_time_bound(date_to, end_of_day=True)
+    except ValueError:
+        return jsonify({
+            'success': False,
+            'message': 'The dates must be YYYY-MM-DD or YYYY-MM-DD HH:MM:SS',
+        }), 422
+
     event_codes = body.get('event_codes')
 
     if event_codes is not None:
@@ -341,6 +353,8 @@ def transactions():
         card=card,
         limit=limit,
         event_codes=event_codes,
+        date_from=date_from,
+        date_to=date_to,
     )
 
     if res is None:

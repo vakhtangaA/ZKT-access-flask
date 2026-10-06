@@ -291,6 +291,48 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual([27, 23], [event['event_code'] for event in denied_or_unregistered])
         self.assertEqual(3, len(everything))
 
+    def test_event_time_bound_covers_whole_days_and_rejects_other_formats(self):
+        self.assertIsNone(main.event_time_bound(None, end_of_day=False))
+        self.assertIsNone(main.event_time_bound('', end_of_day=True))
+        self.assertEqual('2026-10-01 00:00:00', main.event_time_bound('2026-10-01', end_of_day=False))
+        self.assertEqual('2026-10-01 23:59:59', main.event_time_bound('2026-10-01', end_of_day=True))
+        self.assertEqual('2026-10-01 08:30:00', main.event_time_bound('2026-10-01 08:30:00', end_of_day=True))
+
+        for value in ('yesterday', '2026-13-40', '01.10.2026', '2026-10-01 8:30'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                main.event_time_bound(value, end_of_day=False)
+
+    def test_get_transactions_keeps_only_events_inside_the_date_range(self):
+        times = {
+            '1': datetime(2026, 9, 30, 23, 59, 59),
+            '2': datetime(2026, 10, 1, 0, 0, 0),
+            '3': datetime(2026, 10, 3, 23, 59, 59),
+            '4': datetime(2026, 10, 4, 0, 0, 0),
+        }
+        records = [
+            MagicMock(raw_data={'EventType': '0', 'Time_second': key, 'Pin': '1', 'Cardno': '1', 'DoorID': '1'})
+            for key in times
+        ]
+        zk_instance = MagicMock()
+        transaction_table = MagicMock()
+        transaction_table.__iter__.side_effect = lambda: iter(records)
+        zk_instance.table.return_value = transaction_table
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        def read(**filters):
+            with patch('main.ZKAccess', return_value=successful_context), patch(
+                'main.ZKDatetimeUtils.zkctime_to_datetime',
+                side_effect=lambda value: times[value],
+            ), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch('main.open', mock_open()), patch('main.print'):
+                return [event['time'] for event in main.get_transactions('10.0.0.15', 4370, **filters)]
+
+        self.assertEqual(['2026-10-03 23:59:59', '2026-10-01 00:00:00'], read(date_from='2026-10-01', date_to='2026-10-03'))
+        self.assertEqual(['2026-10-04 00:00:00', '2026-10-03 23:59:59', '2026-10-01 00:00:00'], read(date_from='2026-10-01'))
+        self.assertEqual(['2026-10-01 00:00:00', '2026-09-30 23:59:59'], read(date_to='2026-10-01'))
+        self.assertEqual(4, len(read()))
+
     def test_get_transactions_returns_none_after_two_failures(self):
         with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]), patch(
             'main.capture_exception',

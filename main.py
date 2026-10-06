@@ -590,18 +590,39 @@ def get_users_with_doors(ip, port, timeout=10000, password='', model=None):
     return with_device_lock(ip, port, operation)
 
 
-def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None, card=None, limit=50, event_codes=None):
+def event_time_bound(value, end_of_day):
+    """Turn a date (YYYY-MM-DD) or a date and time into a string that compares with an event time.
+
+    A bare date covers the whole day: it starts at 00:00:00, or ends at 23:59:59 for an upper bound.
+    Returns None for an empty value and raises ValueError for anything that is not a date.
+    """
+    if not value:
+        return None
+
+    value = str(value).strip()
+
+    if len(value) == 10:
+        datetime.strptime(value, '%Y-%m-%d')
+
+        return value + (' 23:59:59' if end_of_day else ' 00:00:00')
+
+    return datetime.strptime(value, '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d %H:%M:%S')
+
+
+def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None, card=None, limit=50, event_codes=None, date_from=None, date_to=None):
     """Return the newest access events the controller logged for a pin or card.
 
     Each event keeps the raw event code next to its name, so a denied tap (23) can be told
     apart from an opened door (0) per door number. The whole table is read and then matched
-    here, so a pin, card or event type search costs the same as an unfiltered one. Returns None when the
+    here, so a pin, card, event type or date search costs the same as an unfiltered one. Returns None when the
     device could not be read.
     """
     def read_events(zk):
         wanted_pin = str(pin).strip() if pin else None
         wanted_card = str(card).strip() if card else None
         wanted_event_codes = {int(code) for code in event_codes} if event_codes else None
+        earliest = event_time_bound(date_from, end_of_day=False)
+        latest = event_time_bound(date_to, end_of_day=True)
         events = []
         total = 0
 
@@ -630,6 +651,13 @@ def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None,
             if wanted_event_codes is not None and event_code not in wanted_event_codes:
                 continue
 
+            if (earliest or latest) and (
+                event_time is None
+                or (earliest and event_time < earliest)
+                or (latest and event_time > latest)
+            ):
+                continue
+
             events.append({
                 'time': event_time,
                 'pin': raw.get('Pin'),
@@ -640,7 +668,7 @@ def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None,
             })
 
         events.sort(key=lambda event: event['time'] or '', reverse=True)
-        write_output(f"[{get_local_time()}] Read {total} transactions from {ip}, {len(events)} matched pin={wanted_pin} card={wanted_card} event_codes={sorted(wanted_event_codes) if wanted_event_codes else None}")
+        write_output(f"[{get_local_time()}] Read {total} transactions from {ip}, {len(events)} matched pin={wanted_pin} card={wanted_card} event_codes={sorted(wanted_event_codes) if wanted_event_codes else None} from={earliest} to={latest}")
 
         return events[:limit]
 
