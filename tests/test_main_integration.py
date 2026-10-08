@@ -97,38 +97,6 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual({'online': False, 'error': 'SDK error -307: Connection attempt failed'}, result)
         capture_exception.assert_not_called()
 
-    def test_delete_user_retries_and_succeeds_on_second_attempt(self):
-        successful_context = MagicMock()
-        successful_context.__enter__.return_value = MagicMock()
-        successful_context.__exit__.return_value = False
-
-        with patch('main.ZKAccess', side_effect=[Exception('first failure'), successful_context]) as zkteco, patch(
-            'main.ping_host',
-            return_value='Ping successful',
-        ), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch('main.open', mock_open()), patch(
-            'main.print'
-        ):
-            result = main.delete_user('12345', '54321', '10.0.0.15', 4370)
-
-        self.assertTrue(result)
-        self.assertEqual(2, zkteco.call_count)
-
-    def test_delete_user_returns_false_after_two_failed_attempts(self):
-        with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]) as zkteco, patch(
-            'main.ping_host',
-            return_value='Ping successful',
-        ), patch('main.capture_exception') as capture_exception, patch(
-            'main.get_local_time',
-            return_value='2026-04-17 00:00:00',
-        ), patch('main.time.sleep'), patch('main.open', mock_open()), patch(
-            'main.print'
-        ):
-            result = main.delete_user('12345', '54321', '10.0.0.15', 4370)
-
-        self.assertFalse(result)
-        self.assertEqual(2, zkteco.call_count)
-        capture_exception.assert_called_once()
-
     def test_get_users_retries_and_succeeds_on_second_attempt(self):
         zk_instance = MagicMock()
         zk_instance.table.return_value = [
@@ -372,28 +340,6 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual(2, zkteco.call_count)
         capture_exception.assert_called_once()
 
-    def test_add_user_builds_expected_door_access_tuple(self):
-        zk_instance = MagicMock()
-        successful_context = MagicMock()
-        successful_context.__enter__.return_value = zk_instance
-        successful_context.__exit__.return_value = False
-        authorization_table = MagicMock()
-        zk_instance.table.side_effect = lambda name: authorization_table if name == 'UserAuthorize' else MagicMock()
-
-        with patch('main.ZKAccess', return_value=successful_context), patch('main.User', return_value=MagicMock()), patch(
-            'main.get_local_time',
-            return_value='2026-04-17 00:00:00',
-        ), patch(
-            'main.open',
-            mock_open(),
-        ), patch('main.print'):
-            result = main.add_user('12345', '54321', '10.0.0.15', 4370, [1, 3])
-
-        self.assertTrue(result)
-        authorization_table.upsert.assert_called_once_with(
-            [{'pin': '54321', 'timezone_id': 1, 'doors': (True, False, True, False)}]
-        )
-
     def _written_door_access(self, doors):
         zk_instance = MagicMock()
         authorization_table = MagicMock()
@@ -401,33 +347,27 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         successful_context = MagicMock()
         successful_context.__enter__.return_value = zk_instance
         successful_context.__exit__.return_value = False
+        user = {'card': '12345', 'pin': '54321'}
 
-        with patch('main.ZKAccess', return_value=successful_context), patch('main.User', return_value=MagicMock()), patch(
+        if doors is not None:
+            user['doors'] = doors
+
+        with patch('main.ZKAccess', return_value=successful_context), patch(
             'main.get_local_time',
             return_value='2026-04-17 00:00:00',
         ), patch('main.open', mock_open()), patch('main.print'):
-            main.add_user('12345', '54321', '10.0.0.15', 4370, doors)
+            result = main.add_users([user], '10.0.0.15', 4370)
+
+        self.assertTrue(result['success'])
 
         return authorization_table.upsert.call_args.args[0][0]['doors']
 
-    def test_add_user_grants_every_door_only_when_no_doors_are_given(self):
-        self.assertEqual((True, True, True, True), self._written_door_access(None))
-        self.assertEqual((False, False, False, False), self._written_door_access([]))
+    def test_add_users_writes_exactly_the_requested_doors(self):
+        self.assertEqual((True, False, True, False), self._written_door_access([1, 3]))
         self.assertEqual((False, True, False, True), self._written_door_access([2, 4]))
 
-    def test_add_user_reports_to_sentry_after_two_failed_attempts(self):
-        with patch('main.ZKAccess', side_effect=[Exception('first failure'), Exception('second failure')]) as zkteco, patch(
-            'main.ping_host',
-            return_value='Ping successful',
-        ), patch('main.capture_exception') as capture_exception, patch(
-            'main.get_local_time',
-            return_value='2026-04-17 00:00:00',
-        ), patch('main.time.sleep'), patch('main.open', mock_open()), patch('main.print'):
-            result = main.add_user('12345', '54321', '10.0.0.15', 4370, [1, 3])
-
-        self.assertFalse(result)
-        self.assertEqual(2, zkteco.call_count)
-        capture_exception.assert_called_once()
+    def test_add_users_grants_every_door_when_no_doors_are_given(self):
+        self.assertEqual((True, True, True, True), self._written_door_access(None))
 
     def test_add_users_upserts_user_and_authorization_records_in_one_connection(self):
         zk_instance = MagicMock()
@@ -489,6 +429,88 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertTrue(result['success'])
         self.assertEqual(2, zkteco.call_count)
         sleep.assert_called_once_with(0.5)
+
+    def _run_batch(self, operation, users, existing_rows):
+        zk_instance = MagicMock()
+        authorization_table = MagicMock()
+        authorization_table.__iter__.side_effect = lambda: iter(existing_rows)
+        zk_instance.table.side_effect = lambda name: authorization_table if name == 'UserAuthorize' else MagicMock()
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context), patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = operation(users, '10.0.0.15', 4370)
+
+        self.assertTrue(result['success'])
+
+        return authorization_table
+
+    def test_add_users_clears_other_authorization_rows_of_a_pin_before_writing(self):
+        existing_rows = [
+            authorization_row('54321', 1, '15'),
+            authorization_row('54321', 2, '15'),
+            authorization_row('54322', 1, '1'),
+            authorization_row('99999', 2, '15'),
+        ]
+
+        authorization_table = self._run_batch(
+            main.add_users,
+            [{'card': '12345', 'pin': '54321', 'doors': [1]}, {'card': '12346', 'pin': '54322', 'doors': [1]}],
+            existing_rows,
+        )
+
+        # Only the pin with more than its timezone-1 row loses its rows; other pins are untouched.
+        cleared = authorization_table.delete.call_args[0][0]
+        self.assertEqual([('54321', 1), ('54321', 2)], [(row.pin, row.timezone_id) for row in cleared])
+        authorization_table.upsert.assert_called_once()
+
+    def test_add_users_leaves_a_single_timezone_one_row_to_the_upsert(self):
+        authorization_table = self._run_batch(
+            main.add_users,
+            [{'card': '12345', 'pin': '54321', 'doors': [1]}],
+            [authorization_row('54321', 1, '15')],
+        )
+
+        authorization_table.delete.assert_not_called()
+
+    def test_delete_users_clears_every_authorization_row_of_a_deleted_pin(self):
+        existing_rows = [
+            authorization_row('54321', 1, '15'),
+            authorization_row('54322', 1, '3'),
+            authorization_row('54322', 2, '4'),
+        ]
+
+        authorization_table = self._run_batch(
+            main.delete_users,
+            [{'card': '12345', 'pin': '54321', 'doors': [1]}, {'card': '12346', 'pin': '54322'}],
+            existing_rows,
+        )
+
+        cleared = authorization_table.delete.call_args[0][0]
+        self.assertEqual([('54322', 1), ('54322', 2)], [(row.pin, row.timezone_id) for row in cleared])
+
+    def test_a_failed_clear_does_not_stop_the_write(self):
+        zk_instance = MagicMock()
+        authorization_table = MagicMock()
+        authorization_table.__iter__.side_effect = Exception('read failed')
+        zk_instance.table.side_effect = lambda name: authorization_table if name == 'UserAuthorize' else MagicMock()
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context) as zkteco, patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = main.add_users([{'card': '12345', 'pin': '54321', 'doors': [1]}], '10.0.0.15', 4370)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(1, zkteco.call_count)
+        authorization_table.upsert.assert_called_once()
 
     def test_delete_users_deletes_records_and_narrows_kept_doors_in_one_connection(self):
         zk_instance = MagicMock()
@@ -617,7 +639,7 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         sleep.assert_called_once_with(0.5)
         capture_exception.assert_called_once()
 
-    def test_add_user_serializes_same_device_requests_when_called_directly(self):
+    def test_add_users_serializes_same_device_requests_when_called_directly(self):
         state = {
             'current': 0,
             'max_concurrent': 0,
@@ -645,46 +667,15 @@ class MainDeviceIntegrationTest(unittest.TestCase):
 
                 return False
 
-        fake_user = MagicMock()
-        fake_user.with_zk.return_value = fake_user
-
-        with patch('main.ZKAccess', side_effect=lambda *args, **kwargs: FakeZkContext()), patch(
-            'main.User',
-            return_value=fake_user,
-        ), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch('main.open', mock_open()), patch(
+        with patch('main.ZKAccess', side_effect=lambda *args, **kwargs: FakeZkContext()), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch('main.open', mock_open()), patch(
             'main.print'
         ):
             with ThreadPoolExecutor(max_workers=2) as executor:
-                first_call = executor.submit(main.add_user, '12345', '54321', '10.0.0.15', 4370, [1, 2])
+                first_call = executor.submit(main.add_users, [{'card': '12345', 'pin': '54321', 'doors': [1, 2]}], '10.0.0.15', 4370)
                 self.assertTrue(first_started.wait(timeout=1))
-                second_call = executor.submit(main.add_user, '12346', '54322', '10.0.0.15', 4370, [1, 2])
+                second_call = executor.submit(main.add_users, [{'card': '12346', 'pin': '54322', 'doors': [1, 2]}], '10.0.0.15', 4370)
 
-                self.assertTrue(first_call.result(timeout=1))
-                self.assertTrue(second_call.result(timeout=1))
+                self.assertTrue(first_call.result(timeout=1)['success'])
+                self.assertTrue(second_call.result(timeout=1)['success'])
 
         self.assertEqual(1, state['max_concurrent'])
-
-    def test_delete_user_uses_custom_timeout_password_and_model(self):
-        successful_context = MagicMock()
-        successful_context.__enter__.return_value = MagicMock()
-        successful_context.__exit__.return_value = False
-
-        with patch('main.ZKAccess', return_value=successful_context) as zkteco, patch(
-            'main.get_local_time',
-            return_value='2026-04-17 00:00:00',
-        ), patch('main.open', mock_open()), patch('main.print'):
-            result = main.delete_user(
-                '12345',
-                '54321',
-                '10.0.0.15',
-                4370,
-                timeout=10000,
-                password='secret',
-                model='C3-400',
-            )
-
-        self.assertTrue(result)
-        zkteco.assert_called_once_with(
-            connstr='protocol=TCP,ipaddress=10.0.0.15,port=4370,timeout=10000,passwd=secret',
-            device_model=main.ZK400,
-        )

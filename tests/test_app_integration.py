@@ -25,23 +25,6 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.shared_secret_patcher.stop()
-        queue_manager.request_queue.put(None)
-        queue_manager.thread.join(timeout=1)
-
-    def test_remove_user_route_reports_failure_when_delete_user_fails(self):
-        with patch('app.delete_user', return_value=False), patch('app.get_local_time', return_value='2026-04-17 00:00:00'), patch(
-            'app.open',
-            mock_open(),
-        ), patch('app.print'):
-            response = self.client.post('/controller/user/remove/', headers=self.AUTH_HEADERS, json={
-                'card': '12345',
-                'pin': '54321',
-                'ip': '10.0.0.15',
-                'port': 4370,
-            })
-
-        self.assertEqual(200, response.status_code)
-        self.assertFalse(response.get_json()['success'])
 
     def test_users_with_doors_route_returns_users_and_their_doors(self):
         expected_users = {
@@ -161,19 +144,17 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         self.assertEqual(422, rejected.status_code)
         get_transactions.assert_called_once()
 
-    def test_set_user_route_rejects_doors_that_would_not_mean_a_specific_set(self):
+    def test_set_users_route_rejects_doors_that_would_not_mean_a_specific_set(self):
         for doors in ([], '1', [0], [True], {'1': 1}):
-            with self.subTest(doors=doors), patch('app.add_user') as add_user:
-                response = self.client.post('/controller/user/set/', headers=self.AUTH_HEADERS, json={
-                    'card': '12345',
-                    'pin': '54321',
+            with self.subTest(doors=doors), patch('app.add_users') as add_users:
+                response = self.client.post('/controller/users/set/', headers=self.AUTH_HEADERS, json={
                     'ip': '10.0.0.15',
-                    'doors': doors,
+                    'users': [{'card': '12345', 'pin': '54321', 'doors': doors}],
                 })
 
                 self.assertEqual(422, response.status_code)
                 self.assertFalse(response.get_json()['success'])
-                add_user.assert_not_called()
+                add_users.assert_not_called()
 
     def test_transactions_route_passes_dates_and_rejects_bad_ones(self):
         with patch('app.get_transactions', return_value=[]) as get_transactions:
@@ -203,8 +184,6 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
     def test_controller_routes_require_bearer_token(self):
         protected_routes = [
             '/ping/',
-            '/controller/user/set/',
-            '/controller/user/remove/',
             '/controller/users/set/',
             '/controller/users/remove/',
             '/controller/users/',
@@ -344,76 +323,6 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         self.assertFalse(response.get_json()['success'])
         ping_host_endpoint.assert_called_once_with('10.0.0.15')
 
-    def test_set_user_route_reports_failure_when_add_user_fails(self):
-        with patch('app.add_user', return_value=False), patch('app.get_local_time', return_value='2026-04-17 00:00:00'), patch(
-            'app.open',
-            mock_open(),
-        ), patch('app.print'):
-            response = self.client.post('/controller/user/set/', headers=self.AUTH_HEADERS, json={
-                'card': '12345',
-                'pin': '54321',
-                'ip': '10.0.0.15',
-                'port': 4370,
-                'doors': [1, 2],
-            })
-
-        self.assertEqual(200, response.status_code)
-        self.assertFalse(response.get_json()['success'])
-
-    def test_remove_user_route_forwards_optional_device_settings(self):
-        with patch('app.delete_user', return_value=True) as delete_user, patch(
-            'app.get_local_time',
-            return_value='2026-04-17 00:00:00',
-        ), patch('app.open', mock_open()), patch('app.print'):
-            response = self.client.post('/controller/user/remove/', headers=self.AUTH_HEADERS, json={
-                'card': '12345',
-                'pin': '54321',
-                'ip': '10.0.0.15',
-                'port': 4370,
-                'timeout': 10000,
-                'password': 'secret',
-                'model': 'ZK400',
-            })
-
-        self.assertEqual(200, response.status_code)
-        delete_user.assert_called_once_with(
-            card='12345',
-            pin='54321',
-            ip='10.0.0.15',
-            port=4370,
-            timeout=10000,
-            password='secret',
-            model='ZK400',
-        )
-
-    def test_set_user_route_forwards_optional_device_settings(self):
-        with patch('app.add_user', return_value=True) as add_user, patch(
-            'app.get_local_time',
-            return_value='2026-04-17 00:00:00',
-        ), patch('app.open', mock_open()), patch('app.print'):
-            response = self.client.post('/controller/user/set/', headers=self.AUTH_HEADERS, json={
-                'card': '12345',
-                'pin': '54321',
-                'ip': '10.0.0.15',
-                'port': 4370,
-                'doors': [1, 4],
-                'timeout': 10000,
-                'password': 'secret',
-                'model': 'C3-400',
-            })
-
-        self.assertEqual(200, response.status_code)
-        add_user.assert_called_once_with(
-            card='12345',
-            pin='54321',
-            ip='10.0.0.15',
-            port=4370,
-            doors=[1, 4],
-            timeout=10000,
-            password='secret',
-            model='C3-400',
-        )
-
     def test_users_route_forwards_optional_device_settings_and_returns_users_payload(self):
         expected_users = {
             '200': {
@@ -440,35 +349,6 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             '10.0.0.15',
             4370,
             timeout=10000,
-            password='secret',
-            model='C3-400',
-        )
-
-    def test_set_user_route_uses_queue_manager_bridge(self):
-        with patch('queue_manager.add_user_func', return_value=True) as add_user_func, patch(
-            'app.get_local_time',
-            return_value='2026-04-17 00:00:00',
-        ), patch('app.open', mock_open()), patch('app.print'):
-            response = self.client.post('/controller/user/set/', headers=self.AUTH_HEADERS, json={
-                'card': '12345',
-                'pin': '54321',
-                'ip': '10.0.0.15',
-                'port': 4370,
-                'doors': [1, 4],
-                'timeout': 9000,
-                'password': 'secret',
-                'model': 'C3-400',
-            })
-
-        self.assertEqual(200, response.status_code)
-        self.assertTrue(response.get_json()['success'])
-        add_user_func.assert_called_once_with(
-            '12345',
-            '54321',
-            '10.0.0.15',
-            4370,
-            doors=[1, 4],
-            timeout=9000,
             password='secret',
             model='C3-400',
         )
@@ -647,30 +527,26 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             model='C3-400',
         )
 
-    def test_set_user_route_reaches_main_add_user_through_queue_manager(self):
+    def test_set_users_route_reaches_main_add_users_through_queue_manager(self):
         zk_instance = MagicMock()
         successful_context = MagicMock()
         successful_context.__enter__.return_value = zk_instance
         successful_context.__exit__.return_value = False
-        user = MagicMock()
-        user.with_zk.return_value = user
 
         with patch('main.ZKAccess', return_value=successful_context) as zkteco, patch(
-            'main.User',
-            return_value=user,
-        ), patch('app.get_local_time', return_value='2026-04-17 00:00:00'), patch(
-            'main.get_local_time',
+            'app.get_local_time',
             return_value='2026-04-17 00:00:00',
-        ), patch('app.open', mock_open()), patch('main.open', mock_open()), patch('app.print'), patch('main.print'):
-            response = self.client.post('/controller/user/set/', headers=self.AUTH_HEADERS, json={
-                'card': '12345',
-                'pin': '54321',
+        ), patch('main.get_local_time', return_value='2026-04-17 00:00:00'), patch(
+            'app.open',
+            mock_open(),
+        ), patch('main.open', mock_open()), patch('app.print'), patch('main.print'):
+            response = self.client.post('/controller/users/set/', headers=self.AUTH_HEADERS, json={
                 'ip': '10.0.0.15',
                 'port': 4370,
-                'doors': [1, 3],
                 'timeout': 9000,
                 'password': 'secret',
                 'model': 'C3-400',
+                'users': [{'card': '12345', 'pin': '54321', 'doors': [1, 3]}],
             })
 
         self.assertEqual(200, response.status_code)

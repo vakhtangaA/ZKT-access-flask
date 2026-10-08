@@ -1,7 +1,6 @@
 from pyzkaccess import ZKAccess, ZK200, ZK100, ZK400
 from pyzkaccess.common import ZKDatetimeUtils
 from pyzkaccess.enums import EVENT_TYPES
-from pyzkaccess.tables import User
 from datetime import datetime
 from uuid import uuid4
 import ping3
@@ -121,70 +120,38 @@ def allowed_door_numbers(doors):
     return [door_number for door_number, allowed in enumerate(doors, start=1) if allowed]
 
 
-def write_user_authorization(zk, pin, door_access, ip):
-    """Overwrite the door mask of a pin, clearing any other rows the pin has first.
+def clear_stale_authorizations(zk, rewritten_pins, removed_pins, ip, operation_id):
+    """Delete the UserAuthorize rows that a batch write would otherwise leave behind.
 
-    Rows left under another timezone would add their doors to the mask we write, so they are
-    removed. A failure to clear them is logged and the mask is still written.
+    The controller grants a pin the doors of all its rows, and a batch only writes the
+    timezone-1 row. So every row of a rewritten pin that has more than that single row is
+    deleted before the write, and every row of a removed pin goes with its user. The table is
+    read once per batch. A failure here is logged and the write goes ahead, as it did before.
     """
+    rewritten_pins = set(rewritten_pins)
+    removed_pins = set(removed_pins)
+
     try:
-        zk.table('UserAuthorize').where(pin=pin).delete_all()
+        rows_by_pin = {}
+        for row in zk.table('UserAuthorize'):
+            if row.pin in rewritten_pins or row.pin in removed_pins:
+                rows_by_pin.setdefault(row.pin, []).append(row)
+
+        stale = [
+            row
+            for pin, rows in rows_by_pin.items()
+            if pin in removed_pins or len(rows) > 1 or rows[0].timezone_id != 1
+            for row in rows
+        ]
+
+        if stale:
+            zk.table('UserAuthorize').delete(stale)
+            write_output(
+                f"[{get_local_time()}] Batch {operation_id} cleared {len(stale)} authorization rows "
+                f"of {len({row.pin for row in stale})} pins on {ip}"
+            )
     except Exception as exception:
-        write_output(f"[{get_local_time()}] Could not clear authorization rows of pin {pin} on {ip}: {exception}")
-
-    zk.table('UserAuthorize').upsert([{'pin': pin, 'timezone_id': 1, 'doors': door_access}])
-    print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
-    write_output(f"[{get_local_time()}] Authorized To Doors: {door_access}")
-
-
-def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', model=None):
-    def operation():
-        print(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip}")
-        write_output(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #1")
-        connstr = build_connstr(ip, port, timeout, password)
-        device_model = resolve_device_model(model)
-
-        if doors is None:
-            door_access = (True, True, True, True)
-        else:
-            door_access = (1 in doors, 2 in doors, 3 in doors, 4 in doors)
-
-        try:
-            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
-                user = User(card=card, pin=pin, start_time=datetime.now(), end_time=datetime(9999, 12, 31, 23, 59, 59),
-                            super_authorize=False).with_zk(zk)
-                user.save()
-                print(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS")
-                write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS")
-
-                write_user_authorization(zk, pin, door_access, ip)
-
-            return True
-        except Exception as ex:
-            log_retry_attempt('Adding user', ip, 1, ex)
-            print(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
-            write_output(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
-            try:
-                with ZKAccess(connstr=connstr, device_model=device_model) as zk:
-                    user = User(card=card, pin=pin, start_time=datetime.now(), end_time=datetime(9999, 12, 31, 23, 59, 59),
-                                super_authorize=False).with_zk(zk)
-                    user.save()
-                    print(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS ON TRY #2")
-                    write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS ON TRY #2")
-
-                    write_user_authorization(zk, pin, door_access, ip)
-
-                return True
-            except Exception as ex:
-                text = f"[{get_local_time()}] Exception when adding user! Device: {ip} - {str(ex)} + '\n' + {ping_host(ip)} + '\n'"
-                write_output(text)
-                capture_exception(ex, device_ip=ip, operation='add_user', port=port, model=model)
-                print(text + "\n")
-                return False
-
-        return True
-
-    return with_device_lock(ip, port, operation)
+        write_output(f"[{get_local_time()}] Batch {operation_id} could not clear old authorization rows on {ip}: {exception}")
 
 
 def add_users(users, ip, port=4370, timeout=4000, password='', model=None, operation_id=None):
@@ -236,6 +203,7 @@ def add_users(users, ip, port=4370, timeout=4000, password='', model=None, opera
                     connstr=build_connstr(ip, port, timeout, password),
                     device_model=resolve_device_model(model),
                 ) as zk:
+                    clear_stale_authorizations(zk, [record['pin'] for record in authorization_records], [], ip, operation_id)
                     zk.table('User').upsert(user_records)
                     zk.table('UserAuthorize').upsert(authorization_records)
 
@@ -309,7 +277,9 @@ def delete_users(users, ip, port=4370, timeout=4000, password='', model=None, op
     An item without `doors` is deleted from the device. An item with `doors` keeps its user
     record and only has its door mask overwritten, which is how a user keeps entrance access
     after losing the elevator. `userauthorize` is keyed by Pin and AuthorizeTimezoneId, so the
-    upsert replaces the mask in place; a failed write never leaves the user off the device.
+    upsert replaces the timezone-1 mask in place. Other rows of those pins, and every row of a
+    deleted pin, are cleared first (see `clear_stale_authorizations`); only a pin that had such
+    rows can be left without doors if the write then fails.
     """
     operation_id = operation_id or str(uuid4())
     normalized_users = list(users or [])
@@ -368,6 +338,14 @@ def delete_users(users, ip, port=4370, timeout=4000, password='', model=None, op
                     connstr=build_connstr(ip, port, timeout, password),
                     device_model=resolve_device_model(model),
                 ) as zk:
+                    clear_stale_authorizations(
+                        zk,
+                        [record['pin'] for record in rewrite_authorization_records],
+                        [record['pin'] for record in delete_records],
+                        ip,
+                        operation_id,
+                    )
+
                     if delete_records:
                         zk.table('User').delete(delete_records)
 
@@ -437,46 +415,6 @@ def delete_users(users, ip, port=4370, timeout=4000, password='', model=None, op
             'message': 'Failed to remove users from controller',
             'results': results,
         }
-
-    return with_device_lock(ip, port, operation)
-
-
-def delete_user(card, pin, ip, port, timeout=4000, password='', model=None):
-    def operation():
-        print(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip}")
-        write_output(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #1")
-        connstr = build_connstr(ip, port, timeout, password)
-        device_model = resolve_device_model(model)
-        try:
-            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
-                user = User(card=card, pin=pin,
-                            super_authorize=True).with_zk(zk)
-                user.delete()
-                print(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS")
-                write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS")
-
-            return True
-        except Exception as ex:
-            log_retry_attempt('Removing user', ip, 1, ex)
-            print(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
-            write_output(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
-            try:
-                with ZKAccess(connstr=connstr, device_model=device_model) as zk:
-                    user = User(card=card, pin=pin,
-                                super_authorize=True).with_zk(zk)
-                    user.delete()
-                    print(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS ON TRY #2")
-                    write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS ON TRY #2")
-
-                return True
-            except Exception as ex:
-                text = f"[{get_local_time()}] Exception when deleting user! Device: {ip} - {str(ex)} + '\n' + {ping_host(ip)}"
-                print(text)
-                write_output(text)
-                capture_exception(ex, device_ip=ip, operation='delete_user', port=port, model=model)
-                return False
-
-        return True
 
     return with_device_lock(ip, port, operation)
 
