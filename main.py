@@ -120,6 +120,40 @@ def allowed_door_numbers(doors):
     return [door_number for door_number, allowed in enumerate(doors, start=1) if allowed]
 
 
+def clear_stale_authorizations(zk, rewritten_pins, removed_pins, ip, operation_id):
+    """Delete the UserAuthorize rows that a batch write would otherwise leave behind.
+
+    The controller grants a pin the doors of all its rows, and a batch only writes the
+    timezone-1 row. So every row of a rewritten pin that has more than that single row is
+    deleted before the write, and every row of a removed pin goes with its user. The table is
+    read once per batch. A failure here is logged and the write goes ahead, as it did before.
+    """
+    rewritten_pins = set(rewritten_pins)
+    removed_pins = set(removed_pins)
+
+    try:
+        rows_by_pin = {}
+        for row in zk.table('UserAuthorize'):
+            if row.pin in rewritten_pins or row.pin in removed_pins:
+                rows_by_pin.setdefault(row.pin, []).append(row)
+
+        stale = [
+            row
+            for pin, rows in rows_by_pin.items()
+            if pin in removed_pins or len(rows) > 1 or rows[0].timezone_id != 1
+            for row in rows
+        ]
+
+        if stale:
+            zk.table('UserAuthorize').delete(stale)
+            write_output(
+                f"[{get_local_time()}] Batch {operation_id} cleared {len(stale)} authorization rows "
+                f"of {len({row.pin for row in stale})} pins on {ip}"
+            )
+    except Exception as exception:
+        write_output(f"[{get_local_time()}] Batch {operation_id} could not clear old authorization rows on {ip}: {exception}")
+
+
 def add_users(users, ip, port=4370, timeout=4000, password='', model=None, operation_id=None):
     """Upsert multiple users and their door authorizations in one SDK session."""
     operation_id = operation_id or str(uuid4())
@@ -169,6 +203,7 @@ def add_users(users, ip, port=4370, timeout=4000, password='', model=None, opera
                     connstr=build_connstr(ip, port, timeout, password),
                     device_model=resolve_device_model(model),
                 ) as zk:
+                    clear_stale_authorizations(zk, [record['pin'] for record in authorization_records], [], ip, operation_id)
                     zk.table('User').upsert(user_records)
                     zk.table('UserAuthorize').upsert(authorization_records)
 
@@ -242,7 +277,9 @@ def delete_users(users, ip, port=4370, timeout=4000, password='', model=None, op
     An item without `doors` is deleted from the device. An item with `doors` keeps its user
     record and only has its door mask overwritten, which is how a user keeps entrance access
     after losing the elevator. `userauthorize` is keyed by Pin and AuthorizeTimezoneId, so the
-    upsert replaces the mask in place; a failed write never leaves the user off the device.
+    upsert replaces the timezone-1 mask in place. Other rows of those pins, and every row of a
+    deleted pin, are cleared first (see `clear_stale_authorizations`); only a pin that had such
+    rows can be left without doors if the write then fails.
     """
     operation_id = operation_id or str(uuid4())
     normalized_users = list(users or [])
@@ -301,6 +338,14 @@ def delete_users(users, ip, port=4370, timeout=4000, password='', model=None, op
                     connstr=build_connstr(ip, port, timeout, password),
                     device_model=resolve_device_model(model),
                 ) as zk:
+                    clear_stale_authorizations(
+                        zk,
+                        [record['pin'] for record in rewrite_authorization_records],
+                        [record['pin'] for record in delete_records],
+                        ip,
+                        operation_id,
+                    )
+
                     if delete_records:
                         zk.table('User').delete(delete_records)
 

@@ -430,6 +430,88 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual(2, zkteco.call_count)
         sleep.assert_called_once_with(0.5)
 
+    def _run_batch(self, operation, users, existing_rows):
+        zk_instance = MagicMock()
+        authorization_table = MagicMock()
+        authorization_table.__iter__.side_effect = lambda: iter(existing_rows)
+        zk_instance.table.side_effect = lambda name: authorization_table if name == 'UserAuthorize' else MagicMock()
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context), patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = operation(users, '10.0.0.15', 4370)
+
+        self.assertTrue(result['success'])
+
+        return authorization_table
+
+    def test_add_users_clears_other_authorization_rows_of_a_pin_before_writing(self):
+        existing_rows = [
+            authorization_row('54321', 1, '15'),
+            authorization_row('54321', 2, '15'),
+            authorization_row('54322', 1, '1'),
+            authorization_row('99999', 2, '15'),
+        ]
+
+        authorization_table = self._run_batch(
+            main.add_users,
+            [{'card': '12345', 'pin': '54321', 'doors': [1]}, {'card': '12346', 'pin': '54322', 'doors': [1]}],
+            existing_rows,
+        )
+
+        # Only the pin with more than its timezone-1 row loses its rows; other pins are untouched.
+        cleared = authorization_table.delete.call_args[0][0]
+        self.assertEqual([('54321', 1), ('54321', 2)], [(row.pin, row.timezone_id) for row in cleared])
+        authorization_table.upsert.assert_called_once()
+
+    def test_add_users_leaves_a_single_timezone_one_row_to_the_upsert(self):
+        authorization_table = self._run_batch(
+            main.add_users,
+            [{'card': '12345', 'pin': '54321', 'doors': [1]}],
+            [authorization_row('54321', 1, '15')],
+        )
+
+        authorization_table.delete.assert_not_called()
+
+    def test_delete_users_clears_every_authorization_row_of_a_deleted_pin(self):
+        existing_rows = [
+            authorization_row('54321', 1, '15'),
+            authorization_row('54322', 1, '3'),
+            authorization_row('54322', 2, '4'),
+        ]
+
+        authorization_table = self._run_batch(
+            main.delete_users,
+            [{'card': '12345', 'pin': '54321', 'doors': [1]}, {'card': '12346', 'pin': '54322'}],
+            existing_rows,
+        )
+
+        cleared = authorization_table.delete.call_args[0][0]
+        self.assertEqual([('54322', 1), ('54322', 2)], [(row.pin, row.timezone_id) for row in cleared])
+
+    def test_a_failed_clear_does_not_stop_the_write(self):
+        zk_instance = MagicMock()
+        authorization_table = MagicMock()
+        authorization_table.__iter__.side_effect = Exception('read failed')
+        zk_instance.table.side_effect = lambda name: authorization_table if name == 'UserAuthorize' else MagicMock()
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context) as zkteco, patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            result = main.add_users([{'card': '12345', 'pin': '54321', 'doors': [1]}], '10.0.0.15', 4370)
+
+        self.assertTrue(result['success'])
+        self.assertEqual(1, zkteco.call_count)
+        authorization_table.upsert.assert_called_once()
+
     def test_delete_users_deletes_records_and_narrows_kept_doors_in_one_connection(self):
         zk_instance = MagicMock()
         user_table = MagicMock()
