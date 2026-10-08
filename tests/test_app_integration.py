@@ -191,6 +191,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             '/controller/transactions/',
             '/controller/restart/',
             '/controller/health/',
+            '/controller/door/control/',
         ]
 
         for route in protected_routes:
@@ -234,6 +235,93 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             password='secret',
             model='C3-400',
         )
+
+    DOOR_CONTROL_BODY = {
+        'ip': '10.0.0.15',
+        'port': 4370,
+        'timeout': 9000,
+        'password': 'secret',
+        'model': 'C3-400',
+        'door': 3,
+        'action': 'open',
+        'seconds': 7,
+    }
+
+    def test_door_control_route_requires_bearer_token(self):
+        with patch('app.control_door') as control_door:
+            response = self.client.post('/controller/door/control/', json=self.DOOR_CONTROL_BODY)
+
+        self.assertEqual(401, response.status_code)
+        self.assertFalse(response.get_json()['success'])
+        control_door.assert_not_called()
+
+    def test_door_control_route_forwards_controller_settings_and_command(self):
+        with patch('app.control_door', return_value=True) as control_door:
+            response = self.client.post(
+                '/controller/door/control/',
+                headers=self.AUTH_HEADERS,
+                json=self.DOOR_CONTROL_BODY,
+            )
+
+        self.assertEqual(200, response.status_code)
+        self.assertTrue(response.get_json()['success'])
+        control_door.assert_called_once_with(
+            ip='10.0.0.15',
+            port=4370,
+            timeout=9000,
+            password='secret',
+            model='C3-400',
+            door=3,
+            action='open',
+            seconds=7,
+        )
+
+    def test_door_control_route_does_not_need_seconds_for_hold_open_or_close(self):
+        for action in ('hold_open', 'close'):
+            with self.subTest(action=action), patch('app.control_door', return_value=True) as control_door:
+                body = {'ip': '10.0.0.15', 'model': 'C3-200', 'door': 2, 'action': action}
+                response = self.client.post('/controller/door/control/', headers=self.AUTH_HEADERS, json=body)
+
+                self.assertEqual(200, response.status_code)
+                self.assertEqual(action, control_door.call_args.kwargs['action'])
+                self.assertIsNone(control_door.call_args.kwargs['seconds'])
+
+    def test_door_control_route_rejects_invalid_commands(self):
+        invalid_changes = {
+            'missing ip': {'ip': None},
+            'unknown action': {'action': 'unlock'},
+            'missing door': {'door': None},
+            'door zero': {'door': 0},
+            'door above model lock count': {'model': 'C3-200', 'door': 3},
+            'door as bool': {'door': True},
+            'door as string': {'door': '1'},
+            'open without seconds': {'seconds': None},
+            'seconds zero': {'seconds': 0},
+            'seconds 255': {'seconds': 255},
+            'seconds as string': {'seconds': '5'},
+        }
+
+        for name, changes in invalid_changes.items():
+            body = {**self.DOOR_CONTROL_BODY, **changes}
+            body = {key: value for key, value in body.items() if value is not None}
+
+            with self.subTest(name), patch('app.control_door') as control_door:
+                response = self.client.post('/controller/door/control/', headers=self.AUTH_HEADERS, json=body)
+
+                self.assertEqual(422, response.status_code)
+                self.assertFalse(response.get_json()['success'])
+                control_door.assert_not_called()
+
+    def test_door_control_route_returns_502_when_the_controller_fails(self):
+        with patch('app.control_door', return_value=False):
+            response = self.client.post(
+                '/controller/door/control/',
+                headers=self.AUTH_HEADERS,
+                json=self.DOOR_CONTROL_BODY,
+            )
+
+        self.assertEqual(502, response.status_code)
+        self.assertFalse(response.get_json()['success'])
 
     def test_health_route_requires_bearer_token(self):
         with patch('app.get_shared_secret', return_value='test-secret'):

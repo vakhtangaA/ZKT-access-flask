@@ -152,6 +152,46 @@ The restart route requires:
 Authorization: Bearer <ZKTECO_SHARED_SECRET>
 ```
 
+### `POST /controller/door/control/`
+
+Switches one door's lock relay, like ZKAccess's Remote Opening and Remote
+Closing dialogs. It requires the shared Bearer token and runs under the
+per-device lock. It is not retried, because the relay may already have switched.
+
+Request body (`door` is the controller's own door number, 1 to the model's lock
+count; `seconds` is required only for `open`):
+
+```json
+{
+  "ip": "178.134.182.19",
+  "port": 4370,
+  "model": "C3-400",
+  "door": 2,
+  "action": "open",
+  "seconds": 5
+}
+```
+
+| `action` | ZKAccess option | `ControlDevice` calls |
+|---|---|---|
+| `open` | Remote Opening, door open time N | `(1, door, 1, seconds)` |
+| `hold_open` | Remote Opening, Normal Opening | `(1, door, 1, 255)` |
+| `close` | Remote Closing, Disable Intraday Passage Mode Time Zone, then Close door | `(4, door, 0)`, then `(1, door, 1, 0)` |
+
+Output time 255 puts the door in the firmware's normally open state. Output
+time 0 alone does not leave that state: on site, ZKAccess "Close door" left a
+Normal Opening door open, and only "Disable Intraday Passage Mode Time Zone"
+(operation 4, 0) closed it. A side effect is that `close` also suspends a
+passage-mode time zone (`DoorNKeepOpenTimeZone`) for the rest of the day; the
+Laravel app never sets one.
+
+Responses: `200` when the commands were sent, `422` for invalid input, `502`
+when the SDK call failed.
+
+Not yet checked on hardware: whether `open` above 60 s works (the SDK guide says
+1-60, the ZKAccess dialog says 1-254), and whether a held door stays open past
+midnight or a controller restart.
+
 ### `POST /controller/health/`
 
 Opens and closes a real ZKTeco SDK connection. This is the preferred health
