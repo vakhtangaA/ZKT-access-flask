@@ -26,6 +26,6 @@ Flask bridge between the Laravel `Elevator` app (`../Elevator`) and ZKTeco acces
 
 - Every controller operation must go through the device lock. Two concurrent SDK sessions to one controller corrupt state or fail with `-307`.
 - New controller routes require the Bearer check, like the existing ones.
-- Changing a route's request or response shape changes the contract with Laravel. Update `../Elevator/app/Services/*` and both test suites together.
+- Changing a route's request or response shape changes the contract with Laravel. Update the request class in `../Elevator/app/Http/Integrations/ZktecoBridge/Requests/` and both test suites together.
 - Do not edit `../pyzkaccess`; work around its bugs here.
 - Never commit keys, `.rdp` files, passwords or `output.txt`.
