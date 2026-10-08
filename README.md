@@ -4,7 +4,7 @@ Small Flask service that sits between the Laravel `Elevator` app and ZKTeco acce
 
 ## Overview
 
-This service exists so Laravel can treat controller operations as authenticated HTTP requests instead of loading the ZKTeco SDK directly. The typical caller is `Elevator`'s `TagService`, which sends `/controller/user/set/`, `/controller/user/remove/`, and `/controller/users/` requests with the target controller IP, port, model, and credentials.
+This service exists so Laravel can treat controller operations as authenticated HTTP requests instead of loading the ZKTeco SDK directly. The caller is `Elevator`'s `ZktecoBridge` client: tag writes go to `/controller/users/set/` and `/controller/users/remove/` in batches, one request per controller, with the target controller IP, port and model in each body.
 
 ## Architecture
 
@@ -28,16 +28,16 @@ sequenceDiagram
     participant M as main.py
     participant Z as ZKTeco controller
 
-    L->>A: POST /controller/user/set/
-    A->>A: validate bearer token
-    A->>Q: add_user(...)
+    L->>A: POST /controller/users/set/
+    A->>A: validate bearer token and users
+    A->>Q: add_users(...)
     Q->>Q: acquire per-device lock
-    Q->>M: add_user(...)
+    Q->>M: add_users(...)
     M->>M: build connstr + resolve model
     M->>Z: SDK Connect over TCP 4370
     Z-->>M: SDK response
-    M-->>A: True / False
-    A-->>L: JSON response
+    M-->>A: per-card results
+    A-->>L: JSON response (200, or 502 when the batch failed)
 ```
 
 ## Locking and Concurrency
@@ -88,26 +88,44 @@ Request body:
 }
 ```
 
-### `POST /controller/user/set/`
+### `POST /controller/users/set/`
 
-Adds or updates a user on a controller.
+Adds or updates cards on one controller in a single SDK session. `doors` is optional: without it the card opens every door, with it the card opens exactly those doors (1-4). An empty list is rejected.
 
 Request body:
 
 ```json
 {
+  "operation_id": "6f1c…-3",
   "ip": "178.134.182.19",
   "port": 4370,
-  "card": "2686267595",
-  "pin": "99291",
   "model": "C3-200",
-  "doors": [1, 2]
+  "users": [
+    {"card": "2686267595", "pin": "99291", "doors": [1, 2]},
+    {"card": "2686267596", "pin": "99292"}
+  ]
 }
 ```
 
-### `POST /controller/user/remove/`
+Response (`200` when the batch succeeded, `502` when the SDK could not complete it, `422` for an invalid body):
 
-Removes a user from a controller.
+```json
+{
+  "success": true,
+  "operation_id": "6f1c…-3",
+  "total": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "results": [
+    {"card": "2686267595", "pin": "99291", "success": true},
+    {"card": "2686267596", "pin": "99292", "success": true}
+  ]
+}
+```
+
+### `POST /controller/users/remove/`
+
+Removes cards from one controller, with the same body and response as `/controller/users/set/`. An item that carries `doors` is not removed: the card stays and only its door mask is rewritten to those doors (a turned-off resident who keeps the entrance).
 
 ### `POST /controller/users/`
 

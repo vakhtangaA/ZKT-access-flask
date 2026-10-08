@@ -1,7 +1,6 @@
 from pyzkaccess import ZKAccess, ZK200, ZK100, ZK400
 from pyzkaccess.common import ZKDatetimeUtils
 from pyzkaccess.enums import EVENT_TYPES
-from pyzkaccess.tables import User
 from datetime import datetime
 from uuid import uuid4
 import ping3
@@ -119,72 +118,6 @@ def write_log_success(text):
 def allowed_door_numbers(doors):
     """Return the door numbers (1-4) set in a UserAuthorize.doors tuple."""
     return [door_number for door_number, allowed in enumerate(doors, start=1) if allowed]
-
-
-def write_user_authorization(zk, pin, door_access, ip):
-    """Overwrite the door mask of a pin, clearing any other rows the pin has first.
-
-    Rows left under another timezone would add their doors to the mask we write, so they are
-    removed. A failure to clear them is logged and the mask is still written.
-    """
-    try:
-        zk.table('UserAuthorize').where(pin=pin).delete_all()
-    except Exception as exception:
-        write_output(f"[{get_local_time()}] Could not clear authorization rows of pin {pin} on {ip}: {exception}")
-
-    zk.table('UserAuthorize').upsert([{'pin': pin, 'timezone_id': 1, 'doors': door_access}])
-    print(f"[{get_local_time()}] Authorized To Doors: {door_access}")
-    write_output(f"[{get_local_time()}] Authorized To Doors: {door_access}")
-
-
-def add_user(card, pin, ip, port=4370, doors=None, timeout=4000, password='', model=None):
-    def operation():
-        print(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip}")
-        write_output(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #1")
-        connstr = build_connstr(ip, port, timeout, password)
-        device_model = resolve_device_model(model)
-
-        if doors is None:
-            door_access = (True, True, True, True)
-        else:
-            door_access = (1 in doors, 2 in doors, 3 in doors, 4 in doors)
-
-        try:
-            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
-                user = User(card=card, pin=pin, start_time=datetime.now(), end_time=datetime(9999, 12, 31, 23, 59, 59),
-                            super_authorize=False).with_zk(zk)
-                user.save()
-                print(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS")
-                write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS")
-
-                write_user_authorization(zk, pin, door_access, ip)
-
-            return True
-        except Exception as ex:
-            log_retry_attempt('Adding user', ip, 1, ex)
-            print(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
-            write_output(f"[{get_local_time()}] Adding user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
-            try:
-                with ZKAccess(connstr=connstr, device_model=device_model) as zk:
-                    user = User(card=card, pin=pin, start_time=datetime.now(), end_time=datetime(9999, 12, 31, 23, 59, 59),
-                                super_authorize=False).with_zk(zk)
-                    user.save()
-                    print(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS ON TRY #2")
-                    write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} ADDED SUCCESS ON TRY #2")
-
-                    write_user_authorization(zk, pin, door_access, ip)
-
-                return True
-            except Exception as ex:
-                text = f"[{get_local_time()}] Exception when adding user! Device: {ip} - {str(ex)} + '\n' + {ping_host(ip)} + '\n'"
-                write_output(text)
-                capture_exception(ex, device_ip=ip, operation='add_user', port=port, model=model)
-                print(text + "\n")
-                return False
-
-        return True
-
-    return with_device_lock(ip, port, operation)
 
 
 def add_users(users, ip, port=4370, timeout=4000, password='', model=None, operation_id=None):
@@ -437,46 +370,6 @@ def delete_users(users, ip, port=4370, timeout=4000, password='', model=None, op
             'message': 'Failed to remove users from controller',
             'results': results,
         }
-
-    return with_device_lock(ip, port, operation)
-
-
-def delete_user(card, pin, ip, port, timeout=4000, password='', model=None):
-    def operation():
-        print(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip}")
-        write_output(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #1")
-        connstr = build_connstr(ip, port, timeout, password)
-        device_model = resolve_device_model(model)
-        try:
-            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
-                user = User(card=card, pin=pin,
-                            super_authorize=True).with_zk(zk)
-                user.delete()
-                print(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS")
-                write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS")
-
-            return True
-        except Exception as ex:
-            log_retry_attempt('Removing user', ip, 1, ex)
-            print(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
-            write_output(f"[{get_local_time()}] Removing user with card: {card} and pin: {pin} on device with ip: {ip} on TRY #2")
-            try:
-                with ZKAccess(connstr=connstr, device_model=device_model) as zk:
-                    user = User(card=card, pin=pin,
-                                super_authorize=True).with_zk(zk)
-                    user.delete()
-                    print(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS ON TRY #2")
-                    write_output(f"[{get_local_time()}] IP: {ip} CARD: {card} REMOVED SUCCESS ON TRY #2")
-
-                return True
-            except Exception as ex:
-                text = f"[{get_local_time()}] Exception when deleting user! Device: {ip} - {str(ex)} + '\n' + {ping_host(ip)}"
-                print(text)
-                write_output(text)
-                capture_exception(ex, device_ip=ip, operation='delete_user', port=port, model=model)
-                return False
-
-        return True
 
     return with_device_lock(ip, port, operation)
 

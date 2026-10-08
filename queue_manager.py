@@ -1,60 +1,11 @@
-from queue import Queue
-from threading import Thread
-from device_locks import output_lock, with_device_lock
-from main import add_user as add_user_func
+from device_locks import with_device_lock
 from main import add_users as add_users_func
 from main import check_device as check_device_func
-from main import delete_user as delete_user_func
 from main import delete_users as delete_users_func
 from main import get_transactions as get_transactions_func
 from main import get_users as get_users_func
 from main import get_users_with_doors as get_users_with_doors_func
 from main import restart_device as restart_device_func
-
-# Define the queue and lock for thread safety
-request_queue = Queue()
-
-# Function to process requests from the queue
-def process_requests():
-    while True:
-        try:
-            request = request_queue.get()
-            if request is None:
-                break  # Exit thread if None is received from the queue
-            card, pin, ip, port, operation = request
-            if operation == 'add':
-                add_user(card, pin, ip, port)
-            elif operation == 'delete':
-                delete_user(card, pin, ip, port)
-            elif operation == 'list':
-                get_users(ip, port)
-            request_queue.task_done()
-        except Exception as e:
-            with output_lock:
-                with open('output.txt', 'a') as output:
-                    output.write(f"An error occurred: {str(e)}" + "\n")
-
-# Function to add a request to the queue
-def add_request(card, pin, ip, port, operation):
-    request_queue.put((card, pin, ip, port, operation))
-
-# Function to handle adding a user
-def add_user(card, pin, ip, port, doors=None, timeout=4000, password='', model=None):
-    return with_device_lock(
-        ip,
-        port,
-        lambda: add_user_func(
-            card,
-            pin,
-            ip,
-            port,
-            doors=doors,
-            timeout=timeout,
-            password=password,
-            model=model,
-        ),
-    )
-
 
 def add_users(users, ip, port=4370, timeout=4000, password='', model=None, operation_id=None):
     return with_device_lock(
@@ -68,22 +19,6 @@ def add_users(users, ip, port=4370, timeout=4000, password='', model=None, opera
             password=password,
             model=model,
             operation_id=operation_id,
-        ),
-    )
-
-# Function to handle deleting a user
-def delete_user(card, pin, ip, port, timeout=4000, password='', model=None):
-    return with_device_lock(
-        ip,
-        port,
-        lambda: delete_user_func(
-            card,
-            pin,
-            ip,
-            port,
-            timeout=timeout,
-            password=password,
-            model=model,
         ),
     )
 
@@ -176,7 +111,3 @@ def check_device(ip, port=4370, timeout=10000, password='', model=None):
             model=model,
         ),
     )
-
-# Start the thread to process requests
-thread = Thread(target=process_requests)
-thread.start()

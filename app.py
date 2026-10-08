@@ -4,7 +4,7 @@ import os
 from device_locks import output_lock
 from main import event_time_bound, ping_host_endpoint
 from observability import initialize_sentry
-from queue_manager import add_user, add_users, check_device, delete_user, delete_users, get_transactions, get_users, get_users_with_doors, restart_device
+from queue_manager import add_users, check_device, delete_users, get_transactions, get_users, get_users_with_doors, restart_device
 import sys
 from datetime import datetime
 import pytz
@@ -95,42 +95,6 @@ def ping_host():
         "success": res,
     })
 
-@app.route('/controller/user/set/', methods = ['POST'])
-def set_user():
-    if not controller_request_is_authorized():
-        return jsonify({
-            'success': False,
-            'message': 'Unauthorized controller request',
-        }), 401
-
-    body = request.json
-    card = body.get('card')
-    pin = body.get('pin')
-    ip = body.get('ip')
-    port = body.get('port')
-    doors = body.get('doors')
-    timeout = body.get('timeout')
-    password = body.get('password')
-    model = body.get('model')
-
-    if not is_door_list(doors):
-        return jsonify({
-            'success': False,
-            'message': 'The doors must be omitted for every door, or a non-empty list of door numbers',
-        }), 422
-
-    print(f"[{get_local_time()}] Recieved request to add user with card: {card} and pin: {pin}")
-    with output_lock:
-        with open('output.txt', 'a') as output:
-            output.write(f"[{get_local_time()}] Recieved request to add user with card: {card} and pin: {pin}" + "\n")
-    res = add_user(card=card, pin=pin, ip=ip, port=port, doors=doors, timeout=timeout, password=password, model=model)
-    
-    return jsonify({
-        "success": res,
-        "message": "Added user successfully" if res else "Failed to add user",
-    })
-
-
 @app.route('/controller/users/set/', methods=['POST'])
 def set_users():
     if not controller_request_is_authorized():
@@ -170,33 +134,6 @@ def set_users():
 
     return jsonify(result), 200 if result.get('success') else 502
 
-    
-@app.route('/controller/user/remove/', methods = ['POST'])
-def remove_user():
-    if not controller_request_is_authorized():
-        return jsonify({
-            'success': False,
-            'message': 'Unauthorized controller request',
-        }), 401
-
-    body = request.json
-    card = body.get('card')
-    pin = body.get('pin')
-    ip = body.get('ip')
-    port = body.get('port')
-    timeout = body.get('timeout')
-    password = body.get('password')
-    model = body.get('model')
-    print(f"[{get_local_time()}] Recieved request to remove user with card: {card} and pin: {pin}")
-    with output_lock:
-        with open('output.txt', 'a') as output:
-            output.write(f"[{get_local_time()}] Recieved request to remove user with card: {card} and pin: {pin}" + "\n")
-    res = delete_user(card=card, pin=pin, ip=ip, port=port, timeout=timeout, password=password, model=model)
-    
-    return jsonify({
-        "success": res,
-        "message": "Removed user successfully" if res else "Failed to remove user",
-    })
     
 @app.route('/controller/users/remove/', methods=['POST'])
 def remove_users():
