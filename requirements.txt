@@ -1,6 +1,6 @@
-flask
+flask==2.3.2
 pyzkaccess==1.2
-sentry-sdk[flask]
-ping3
-pytz
-waitress
+sentry-sdk[flask]==2.58.0
+ping3==4.0.4
+pytz==2024.1
+waitress==2.1.2
