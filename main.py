@@ -635,6 +635,62 @@ def restart_device(ip, port=4370, timeout=10000, password='', model=None):
     return with_device_lock(ip, port, operation)
 
 
+# PULL SDK ControlDevice operations (guide-v2.2 §4.6, attached table 3).
+CONTROL_OUTPUT = 1
+CONTROL_NORMAL_OPEN = 4
+OUTPUT_LOCK = 1
+OUTPUT_NORMAL_OPEN = 255
+OUTPUT_OFF = 0
+DOOR_ACTIONS = ('open', 'hold_open', 'close')
+
+
+def door_control_commands(door, action, seconds=None):
+    """The ControlDevice argument tuples for one door action, in the order they are sent.
+
+    Output time 255 puts the door in the firmware's normally open state, and output
+    time 0 does not leave that state (ZKAccess "Close door" leaves a Normal Opening
+    door open). Operation 4 with 0 does, so close sends it first and then switches
+    the lock off to end a timed open as well.
+    """
+    if action == 'open':
+        return [(CONTROL_OUTPUT, door, OUTPUT_LOCK, seconds, 0)]
+
+    if action == 'hold_open':
+        return [(CONTROL_OUTPUT, door, OUTPUT_LOCK, OUTPUT_NORMAL_OPEN, 0)]
+
+    if action == 'close':
+        return [
+            (CONTROL_NORMAL_OPEN, door, 0, 0, 0),
+            (CONTROL_OUTPUT, door, OUTPUT_LOCK, OUTPUT_OFF, 0),
+        ]
+
+    raise ValueError(f"Unknown door action: {action}")
+
+
+def control_door(ip, port=4370, door=1, action='open', seconds=None, timeout=10000, password='', model=None):
+    """Switch one door's lock relay. Not retried: the relay may already have switched."""
+    commands = door_control_commands(door, action, seconds)
+
+    def operation():
+        connstr = build_connstr(ip, port, timeout, password)
+        device_model = resolve_device_model(model)
+
+        try:
+            write_output(f"[{get_local_time()}] Door {door} {action} on device: {ip}:{port}")
+            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
+                # pyzkaccess has no wrapper for operation 4, so every command goes through the SDK call.
+                for command in commands:
+                    zk.sdk.control_device(*command)
+
+            return True
+        except Exception as ex:
+            write_output(f"[{get_local_time()}] Exception on door {door} {action}: {ip}:{port} - {str(ex)}")
+            capture_exception(ex, device_ip=ip, operation='control_door', port=port, model=model)
+            return False
+
+    return with_device_lock(ip, port, operation)
+
+
 def check_device(ip, port=4370, timeout=10000, password='', model=None):
     """Report whether the controller accepts a connection, and the SDK error when it does not.
 

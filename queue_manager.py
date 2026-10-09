@@ -1,6 +1,7 @@
 from device_locks import with_device_lock
 from main import add_users as add_users_func
 from main import check_device as check_device_func
+from main import control_door as control_door_func
 from main import delete_users as delete_users_func
 from main import get_transactions as get_transactions_func
 from main import get_users as get_users_func
@@ -106,6 +107,23 @@ def check_device(ip, port=4370, timeout=10000, password='', model=None):
         lambda: check_device_func(
             ip,
             port,
+            timeout=timeout,
+            password=password,
+            model=model,
+        ),
+    )
+
+
+def control_door(ip, port=4370, door=1, action='open', seconds=None, timeout=10000, password='', model=None):
+    return with_device_lock(
+        ip,
+        port,
+        lambda: control_door_func(
+            ip,
+            port,
+            door=door,
+            action=action,
+            seconds=seconds,
             timeout=timeout,
             password=password,
             model=model,

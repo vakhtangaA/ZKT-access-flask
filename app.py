@@ -2,9 +2,9 @@ from flask import Flask, request, jsonify
 import hmac
 import os
 from device_locks import output_lock
-from main import event_time_bound, ping_host_endpoint
+from main import DOOR_ACTIONS, event_time_bound, ping_host_endpoint, resolve_device_model
 from observability import initialize_sentry
-from queue_manager import add_users, check_device, delete_users, get_transactions, get_users, get_users_with_doors, restart_device
+from queue_manager import add_users, check_device, control_door, delete_users, get_transactions, get_users, get_users_with_doors, restart_device
 import sys
 from datetime import datetime
 import pytz
@@ -55,6 +55,31 @@ def is_door_list(value):
         isinstance(door, int) and not isinstance(door, bool) and door >= 1
         for door in value
     )
+
+
+def is_whole_number(value, low, high):
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+
+def door_control_error(body):
+    """Why a door command is invalid, or None. Checked before any SDK session opens."""
+    if not body.get('ip'):
+        return 'The controller IP is required'
+
+    action = body.get('action')
+    if action not in DOOR_ACTIONS:
+        return f"The action must be one of: {', '.join(DOOR_ACTIONS)}"
+
+    # Same model resolution the SDK session uses, so the limit matches the doors it can address.
+    door_count = len(resolve_device_model(body.get('model')).doors_def)
+    if not is_whole_number(body.get('door'), 1, door_count):
+        return f'The door must be a whole number from 1 to {door_count}'
+
+    # 0 and 255 mean off and normally open to the SDK, so open accepts only a real duration.
+    if action == 'open' and not is_whole_number(body.get('seconds'), 1, 254):
+        return 'Seconds must be a whole number from 1 to 254'
+
+    return None
 
 
 def invalid_user_indexes(users):
@@ -345,6 +370,41 @@ def restart_controller():
     return jsonify({
         'success': bool(result),
         'message': 'Restart command sent successfully' if result else 'Failed to restart controller',
+    }), 200 if result else 502
+
+
+@app.route('/controller/door/control/', methods=['POST'])
+def door_control():
+    if not controller_request_is_authorized():
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized door control request',
+        }), 401
+
+    body = request.get_json(silent=True) or {}
+    error = door_control_error(body)
+
+    if error:
+        return jsonify({
+            'success': False,
+            'message': error,
+        }), 422
+
+    action = body['action']
+    result = control_door(
+        ip=body['ip'],
+        port=body.get('port', 4370),
+        timeout=body.get('timeout', 10000),
+        password=body.get('password', ''),
+        model=body.get('model'),
+        door=body['door'],
+        action=action,
+        seconds=body['seconds'] if action == 'open' else None,
+    )
+
+    return jsonify({
+        'success': bool(result),
+        'message': f"Door {body['door']} {action} command sent" if result else f"Failed to send door {body['door']} {action} command",
     }), 200 if result else 502
 
 

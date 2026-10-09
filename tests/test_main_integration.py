@@ -85,6 +85,63 @@ class MainDeviceIntegrationTest(unittest.TestCase):
             device_model=main.ZK400,
         )
 
+    def control_door_sdk_calls(self, **kwargs):
+        zk_instance = MagicMock()
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context) as zkteco, patch(
+            'main.get_local_time',
+            return_value='2026-10-09 00:00:00',
+        ), patch('main.open', mock_open()):
+            result = main.control_door('10.0.0.15', 4370, timeout=9000, model='C3-400', **kwargs)
+
+        zkteco.assert_called_once_with(
+            connstr='protocol=TCP,ipaddress=10.0.0.15,port=4370,timeout=9000,passwd=',
+            device_model=main.ZK400,
+        )
+
+        return result, zk_instance.sdk.control_device.call_args_list
+
+    def test_control_door_open_switches_the_lock_relay_for_the_given_seconds(self):
+        result, calls = self.control_door_sdk_calls(door=3, action='open', seconds=7)
+
+        self.assertTrue(result)
+        self.assertEqual([((1, 3, 1, 7, 0),)], calls)
+
+    def test_control_door_hold_open_switches_the_lock_relay_to_normal_open(self):
+        result, calls = self.control_door_sdk_calls(door=2, action='hold_open')
+
+        self.assertTrue(result)
+        self.assertEqual([((1, 2, 1, 255, 0),)], calls)
+
+    def test_control_door_close_ends_normal_open_before_switching_the_lock_relay_off(self):
+        result, calls = self.control_door_sdk_calls(door=4, action='close')
+
+        self.assertTrue(result)
+        self.assertEqual([((4, 4, 0, 0, 0),), ((1, 4, 1, 0, 0),)], calls)
+
+    def test_control_door_runs_under_the_device_lock(self):
+        with patch('main.with_device_lock', return_value=True) as with_device_lock:
+            result = main.control_door('10.0.0.15', 4370, door=1, action='close', model='C3-400')
+
+        self.assertTrue(result)
+        self.assertEqual(('10.0.0.15', 4370), with_device_lock.call_args.args[:2])
+
+    def test_control_door_returns_false_and_reports_when_sdk_fails(self):
+        with patch('main.ZKAccess', side_effect=Exception('SDK error -307')), patch(
+            'main.capture_exception'
+        ) as capture_exception, patch('main.get_local_time', return_value='2026-10-09 00:00:00'), patch(
+            'main.open',
+            mock_open(),
+        ):
+            result = main.control_door('10.0.0.15', 4370, door=1, action='open', seconds=5, model='C3-400')
+
+        self.assertFalse(result)
+        capture_exception.assert_called_once()
+        self.assertEqual('control_door', capture_exception.call_args.kwargs['operation'])
+
     def test_check_device_reports_the_sdk_error_without_sending_it_to_sentry(self):
         with patch('main.ZKAccess', side_effect=Exception('SDK error -307: Connection attempt failed')), patch(
             'main.capture_exception'
