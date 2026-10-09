@@ -104,11 +104,11 @@ class MainDeviceIntegrationTest(unittest.TestCase):
 
         return result, zk_instance.sdk.control_device.call_args_list
 
-    def test_control_door_open_switches_the_lock_relay_for_the_given_seconds(self):
+    def test_control_door_open_ends_normal_open_before_switching_the_lock_relay_for_the_given_seconds(self):
         result, calls = self.control_door_sdk_calls(door=3, action='open', seconds=7)
 
         self.assertTrue(result)
-        self.assertEqual([((1, 3, 1, 7, 0),)], calls)
+        self.assertEqual([((4, 3, 0, 0, 0),), ((1, 3, 1, 7, 0),)], calls)
 
     def test_control_door_hold_open_switches_the_lock_relay_to_normal_open(self):
         result, calls = self.control_door_sdk_calls(door=2, action='hold_open')

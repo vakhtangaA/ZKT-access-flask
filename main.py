@@ -650,10 +650,17 @@ def door_control_commands(door, action, seconds=None):
     Output time 255 puts the door in the firmware's normally open state, and output
     time 0 does not leave that state (ZKAccess "Close door" leaves a Normal Opening
     door open). Operation 4 with 0 does, so close sends it first and then switches
-    the lock off to end a timed open as well.
+    the lock off to end a timed open as well. Open sends it first too, so a timed
+    open after hold_open locks again when the seconds run out.
+
+    Operation 4 with 0 also cancels a normal open time zone for the rest of the day
+    (guide-v2.2 event 10), so open and close both override a scheduled open period.
     """
     if action == 'open':
-        return [(CONTROL_OUTPUT, door, OUTPUT_LOCK, seconds, 0)]
+        return [
+            (CONTROL_NORMAL_OPEN, door, 0, 0, 0),
+            (CONTROL_OUTPUT, door, OUTPUT_LOCK, seconds, 0),
+        ]
 
     if action == 'hold_open':
         return [(CONTROL_OUTPUT, door, OUTPUT_LOCK, OUTPUT_NORMAL_OPEN, 0)]
