@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 import pathlib
 import sys
 import unittest
@@ -201,6 +202,49 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 self.assertEqual(401, response.status_code)
                 self.assertFalse(response.get_json()['success'])
 
+    def test_controller_routes_reject_a_body_that_is_not_a_json_object(self):
+        routes = [
+            '/ping/',
+            '/controller/users/set/',
+            '/controller/users/remove/',
+            '/controller/users/',
+            '/controller/users/doors/',
+            '/controller/transactions/',
+            '/controller/restart/',
+            '/controller/health/',
+            '/controller/door/control/',
+        ]
+        controller_calls = [
+            'ping_host_endpoint', 'add_users', 'delete_users', 'get_users', 'get_users_with_doors',
+            'get_transactions', 'restart_device', 'check_device', 'control_door',
+        ]
+
+        for route in routes:
+            for body in ([{'ip': '10.0.0.15'}], 'open', 3, True):
+                with self.subTest(route=route, body=body), ExitStack() as stack:
+                    mocks = [stack.enter_context(patch(f'app.{name}')) for name in controller_calls]
+                    response = self.client.post(route, headers=self.AUTH_HEADERS, json=body)
+
+                    self.assertEqual(422, response.status_code)
+                    self.assertEqual({
+                        'success': False,
+                        'message': 'The request body must be a JSON object',
+                    }, response.get_json())
+                    for mock in mocks:
+                        mock.assert_not_called()
+
+    def test_ping_and_users_routes_require_ip(self):
+        for route in ('/ping/', '/controller/users/'):
+            with self.subTest(route=route), patch('app.ping_host_endpoint') as ping_host_endpoint, patch(
+                'app.get_users'
+            ) as get_users:
+                response = self.client.post(route, headers=self.AUTH_HEADERS, json={})
+
+                self.assertEqual(422, response.status_code)
+                self.assertFalse(response.get_json()['success'])
+                ping_host_endpoint.assert_not_called()
+                get_users.assert_not_called()
+
     def test_restart_route_requires_bearer_token(self):
         with patch('app.get_shared_secret', return_value='test-secret'):
             response = self.client.post('/controller/restart/', json={
@@ -306,15 +350,6 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             body = {key: value for key, value in body.items() if value is not None}
 
             with self.subTest(name), patch('app.control_door') as control_door:
-                response = self.client.post('/controller/door/control/', headers=self.AUTH_HEADERS, json=body)
-
-                self.assertEqual(422, response.status_code)
-                self.assertFalse(response.get_json()['success'])
-                control_door.assert_not_called()
-
-    def test_door_control_route_rejects_a_body_that_is_not_a_json_object(self):
-        for body in ([self.DOOR_CONTROL_BODY], 'open', 3, True):
-            with self.subTest(body=body), patch('app.control_door') as control_door:
                 response = self.client.post('/controller/door/control/', headers=self.AUTH_HEADERS, json=body)
 
                 self.assertEqual(422, response.status_code)

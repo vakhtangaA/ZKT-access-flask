@@ -17,6 +17,35 @@ def get_local_time():
     return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
 
 
+class NotAJsonObject(Exception):
+    pass
+
+
+@app.errorhandler(NotAJsonObject)
+def not_a_json_object(_error):
+    return jsonify({
+        'success': False,
+        'message': 'The request body must be a JSON object',
+    }), 422
+
+
+def request_body():
+    """The request's JSON object, or {} when there is no JSON body.
+
+    Raises NotAJsonObject for an array, string, number or boolean, which the routes
+    would otherwise crash on with a 500 when they call .get on it.
+    """
+    body = request.get_json(silent=True)
+
+    if body is None:
+        return {}
+
+    if not isinstance(body, dict):
+        raise NotAJsonObject()
+
+    return body
+
+
 def get_shared_secret():
     return os.environ.get('ZKTECO_SHARED_SECRET', '').strip()
 
@@ -63,9 +92,6 @@ def is_whole_number(value, low, high):
 
 def door_control_error(body):
     """Why a door command is invalid, or None. Checked before any SDK session opens."""
-    if not isinstance(body, dict):
-        return 'The request body must be a JSON object'
-
     if not body.get('ip'):
         return 'The controller IP is required'
 
@@ -112,8 +138,15 @@ def ping_host():
             'message': 'Unauthorized controller request',
         }), 401
 
-    body = request.json
+    body = request_body()
     ip = body.get('ip')
+
+    if not ip:
+        return jsonify({
+            'success': False,
+            'message': 'The host IP is required',
+        }), 422
+
     res = ping_host_endpoint(ip)
     print(f"[{get_local_time()}] Ping successful on host: {ip}")
     with output_lock:
@@ -131,7 +164,7 @@ def set_users():
             'message': 'Unauthorized controller request',
         }), 401
 
-    body = request.get_json(silent=True) or {}
+    body = request_body()
     ip = body.get('ip')
     users = body.get('users')
 
@@ -171,7 +204,7 @@ def remove_users():
             'message': 'Unauthorized controller request',
         }), 401
 
-    body = request.get_json(silent=True) or {}
+    body = request_body()
     ip = body.get('ip')
     users = body.get('users')
 
@@ -211,8 +244,15 @@ def users():
             'message': 'Unauthorized controller request',
         }), 401
 
-    body = request.json
+    body = request_body()
     ip = body.get('ip')
+
+    if not ip:
+        return jsonify({
+            'success': False,
+            'message': 'The controller IP is required',
+        }), 422
+
     port = body.get('port')
     timeout = body.get('timeout')
     password = body.get('password')
@@ -236,7 +276,7 @@ def users_with_doors():
             'message': 'Unauthorized controller request',
         }), 401
 
-    body = request.get_json(silent=True) or {}
+    body = request_body()
     ip = body.get('ip')
 
     if not ip:
@@ -272,7 +312,7 @@ def transactions():
             'message': 'Unauthorized controller request',
         }), 401
 
-    body = request.get_json(silent=True) or {}
+    body = request_body()
     ip = body.get('ip')
 
     if not ip:
@@ -349,7 +389,7 @@ def restart_controller():
             'message': 'Unauthorized restart request',
         }), 401
 
-    body = request.get_json(silent=True) or {}
+    body = request_body()
     ip = body.get('ip')
     port = body.get('port', 4370)
     timeout = body.get('timeout', 10000)
@@ -384,7 +424,7 @@ def door_control():
             'message': 'Unauthorized door control request',
         }), 401
 
-    body = request.get_json(silent=True) or {}
+    body = request_body()
     error = door_control_error(body)
 
     if error:
@@ -419,7 +459,7 @@ def health_controller():
             'message': 'Unauthorized health request',
         }), 401
 
-    body = request.get_json(silent=True) or {}
+    body = request_body()
     ip = body.get('ip')
     port = body.get('port', 4370)
     timeout = body.get('timeout', 5000)

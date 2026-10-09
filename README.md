@@ -76,6 +76,9 @@ flask --app app run --host 0.0.0.0 --port 5000
 
 ## API
 
+Every controller route answers `401` without the Bearer token, and `422` when
+the body is JSON but not an object, or when `ip` is missing.
+
 ### `POST /ping/`
 
 Checks whether the host responds to ICMP ping.
