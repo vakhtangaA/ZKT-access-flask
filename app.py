@@ -63,6 +63,9 @@ def is_whole_number(value, low, high):
 
 def door_control_error(body):
     """Why a door command is invalid, or None. Checked before any SDK session opens."""
+    if not isinstance(body, dict):
+        return 'The request body must be a JSON object'
+
     if not body.get('ip'):
         return 'The controller IP is required'
 

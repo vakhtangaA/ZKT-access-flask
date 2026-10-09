@@ -174,14 +174,16 @@ count; `seconds` is required only for `open`):
 
 | `action` | ZKAccess option | `ControlDevice` calls |
 |---|---|---|
-| `open` | Remote Opening, door open time N | `(1, door, 1, seconds)` |
+| `open` | Disable Intraday Passage Mode Time Zone, then Remote Opening, door open time N | `(4, door, 0)`, then `(1, door, 1, seconds)` |
 | `hold_open` | Remote Opening, Normal Opening | `(1, door, 1, 255)` |
 | `close` | Remote Closing, Disable Intraday Passage Mode Time Zone, then Close door | `(4, door, 0)`, then `(1, door, 1, 0)` |
 
 Output time 255 puts the door in the firmware's normally open state. Output
 time 0 alone does not leave that state: on site, ZKAccess "Close door" left a
 Normal Opening door open, and only "Disable Intraday Passage Mode Time Zone"
-(operation 4, 0) closed it. A side effect is that `close` also suspends a
+(operation 4, 0) closed it. `open` sends it first for the same reason, so a
+timed open after `hold_open` locks again when the seconds run out. A side
+effect is that `open` and `close` also suspend a
 passage-mode time zone (`DoorNKeepOpenTimeZone`) for the rest of the day; the
 Laravel app never sets one.
 

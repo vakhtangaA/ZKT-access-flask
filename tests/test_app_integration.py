@@ -312,6 +312,15 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 self.assertFalse(response.get_json()['success'])
                 control_door.assert_not_called()
 
+    def test_door_control_route_rejects_a_body_that_is_not_a_json_object(self):
+        for body in ([self.DOOR_CONTROL_BODY], 'open', 3, True):
+            with self.subTest(body=body), patch('app.control_door') as control_door:
+                response = self.client.post('/controller/door/control/', headers=self.AUTH_HEADERS, json=body)
+
+                self.assertEqual(422, response.status_code)
+                self.assertFalse(response.get_json()['success'])
+                control_door.assert_not_called()
+
     def test_door_control_route_returns_502_when_the_controller_fails(self):
         with patch('app.control_door', return_value=False):
             response = self.client.post(
