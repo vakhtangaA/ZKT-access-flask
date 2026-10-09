@@ -17,3 +17,4 @@ log.txt
 relay_assignments.json
 controller_samples_*.json
 
+probe_relay_state_*.txt
