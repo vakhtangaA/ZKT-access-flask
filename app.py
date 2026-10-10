@@ -4,7 +4,7 @@ import os
 from device_locks import output_lock
 from main import DOOR_ACTIONS, event_time_bound, ping_host_endpoint, resolve_device_model
 from observability import initialize_sentry
-from queue_manager import add_users, check_device, control_door, delete_users, get_transactions, get_users, get_users_with_doors, restart_device
+from queue_manager import add_users, check_device, control_door, delete_users, get_transactions, get_users, get_users_with_doors, read_relay_state, restart_device
 import sys
 from datetime import datetime
 import pytz
@@ -449,6 +449,44 @@ def door_control():
         'success': bool(result),
         'message': f"Door {body['door']} {action} command sent" if result else f"Failed to send door {body['door']} {action} command",
     }), 200 if result else 502
+
+
+@app.route('/controller/relays/state/', methods=['POST'])
+def relay_state():
+    if not controller_request_is_authorized():
+        return jsonify({
+            'success': False,
+            'message': 'Unauthorized relay state request',
+        }), 401
+
+    body = request_body()
+    ip = body.get('ip')
+
+    if not ip:
+        return jsonify({
+            'success': False,
+            'message': 'The controller IP is required',
+        }), 422
+
+    result = read_relay_state(
+        ip=ip,
+        port=body.get('port', 4370),
+        timeout=body.get('timeout', 10000),
+        password=body.get('password', ''),
+        model=body.get('model'),
+    )
+
+    if result is None:
+        return jsonify({
+            'success': False,
+            'message': 'Could not read the relay state from the controller',
+        }), 502
+
+    return jsonify({
+        'success': True,
+        'relays': result['relays'],
+        'changed_at': result['changed_at'],
+    })
 
 
 @app.route('/controller/health/', methods=['POST'])

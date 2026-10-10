@@ -197,6 +197,42 @@ Not yet checked on hardware: whether `open` above 60 s works (the SDK guide says
 1-60, the ZKAccess dialog says 1-254), and whether a held door stays open past
 midnight or a controller restart.
 
+### `POST /controller/relays/state/`
+
+Reads whether each door's lock relay is on right now. It requires the shared
+Bearer token and runs under the per-device lock.
+
+Request body: `ip`, `port`, `model`, optional `timeout` and `password`.
+
+```json
+{
+  "success": true,
+  "relays": [{"door": 1, "on": true}, {"door": 2, "on": false}],
+  "changed_at": "2026-10-09 23:07:39"
+}
+```
+
+`relays` has one entry per lock of the model. `changed_at` is the controller's
+clock at the last relay or sensor change on the board, for any door.
+
+It calls `GetRTLogExt` directly (pyzkaccess does not wrap it) and reads the
+`type=rtstate` record's `relay` field, one bit per door from the lowest. The
+SDK guide says that field is "currently 0", but on the C3-200 boards it follows
+every switch (checked 2026-10-09): commands, cards, and a timed open running
+out. It is what the firmware drives the relay to, not a reading of the contact.
+
+The controller sends that record only once its realtime event cache is empty,
+so the route reads and drops the queued events first (the `Transaction` table
+keeps them) and gives up after 10 reads. Two side effects:
+
+- A ZKAccess Real-time Monitoring window on the same controller loses those
+  events from its live view.
+- Mixing `GetRTLog` and `GetRTLogExt` on one session kept the cache from ever
+  emptying, so the route uses only `GetRTLogExt`.
+
+Responses: `200` with the state, `422` without `ip`, `502` when the SDK failed
+or no status record came back.
+
 ### `POST /controller/health/`
 
 Opens and closes a real ZKTeco SDK connection. This is the preferred health
