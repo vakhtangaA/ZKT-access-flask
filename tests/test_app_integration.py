@@ -213,10 +213,11 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             '/controller/restart/',
             '/controller/health/',
             '/controller/door/control/',
+            '/controller/relays/state/',
         ]
         controller_calls = [
             'ping_host_endpoint', 'add_users', 'delete_users', 'get_users', 'get_users_with_doors',
-            'get_transactions', 'restart_device', 'check_device', 'control_door',
+            'get_transactions', 'restart_device', 'check_device', 'control_door', 'read_relay_state',
         ]
 
         for route in routes:
@@ -363,6 +364,52 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
                 headers=self.AUTH_HEADERS,
                 json=self.DOOR_CONTROL_BODY,
             )
+
+        self.assertEqual(502, response.status_code)
+        self.assertFalse(response.get_json()['success'])
+
+    RELAY_STATE = {
+        'relays': [{'door': 1, 'on': True}, {'door': 2, 'on': False}],
+        'changed_at': '2026-10-09 23:07:39',
+    }
+
+    def test_relay_state_route_requires_bearer_token(self):
+        with patch('app.read_relay_state') as read_relay_state:
+            response = self.client.post('/controller/relays/state/', json={'ip': '10.0.0.15'})
+
+        self.assertEqual(401, response.status_code)
+        read_relay_state.assert_not_called()
+
+    def test_relay_state_route_requires_ip(self):
+        with patch('app.read_relay_state') as read_relay_state:
+            response = self.client.post('/controller/relays/state/', headers=self.AUTH_HEADERS, json={'port': 4370})
+
+        self.assertEqual(422, response.status_code)
+        read_relay_state.assert_not_called()
+
+    def test_relay_state_route_returns_each_doors_relay(self):
+        with patch('app.read_relay_state', return_value=self.RELAY_STATE) as read_relay_state:
+            response = self.client.post('/controller/relays/state/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'port': 4372,
+                'timeout': 9000,
+                'password': 'secret',
+                'model': 'C3-200',
+            })
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual({'success': True, **self.RELAY_STATE}, response.get_json())
+        read_relay_state.assert_called_once_with(
+            ip='10.0.0.15',
+            port=4372,
+            timeout=9000,
+            password='secret',
+            model='C3-200',
+        )
+
+    def test_relay_state_route_returns_502_when_the_controller_cannot_be_read(self):
+        with patch('app.read_relay_state', return_value=None):
+            response = self.client.post('/controller/relays/state/', headers=self.AUTH_HEADERS, json={'ip': '10.0.0.15'})
 
         self.assertEqual(502, response.status_code)
         self.assertFalse(response.get_json()['success'])

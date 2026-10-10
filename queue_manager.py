@@ -6,6 +6,7 @@ from main import delete_users as delete_users_func
 from main import get_transactions as get_transactions_func
 from main import get_users as get_users_func
 from main import get_users_with_doors as get_users_with_doors_func
+from main import read_relay_state as read_relay_state_func
 from main import restart_device as restart_device_func
 
 def add_users(users, ip, port=4370, timeout=4000, password='', model=None, operation_id=None):
@@ -124,6 +125,20 @@ def control_door(ip, port=4370, door=1, action='open', seconds=None, timeout=100
             door=door,
             action=action,
             seconds=seconds,
+            timeout=timeout,
+            password=password,
+            model=model,
+        ),
+    )
+
+
+def read_relay_state(ip, port=4370, timeout=10000, password='', model=None):
+    return with_device_lock(
+        ip,
+        port,
+        lambda: read_relay_state_func(
+            ip,
+            port,
             timeout=timeout,
             password=password,
             model=model,

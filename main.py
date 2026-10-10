@@ -2,6 +2,7 @@ from pyzkaccess import ZKAccess, ZK200, ZK100, ZK400
 from pyzkaccess.common import ZKDatetimeUtils
 from pyzkaccess.enums import EVENT_TYPES
 from datetime import datetime
+import ctypes
 from uuid import uuid4
 import ping3
 import time
@@ -714,5 +715,87 @@ def check_device(ip, port=4370, timeout=10000, password='', model=None):
             text = f"[{get_local_time()}] Exception when checking device health: {ip}:{port} - {str(ex)}"
             write_output(text)
             return {'online': False, 'error': str(ex)}
+
+    return with_device_lock(ip, port, operation)
+
+
+# GetRTLogExt (guide-v2.2 §4.12, attached table 8). pyzkaccess wraps only GetRTLog, whose status
+# record carries the door sensors and not the relays. ZKAccess 3.5 reads it into 5120 bytes too.
+RT_LOG_BUFFER_SIZE = 5120
+RELAY_STATE_READS = 10
+RELAY_STATE_READ_DELAY_SECONDS = 0.3
+
+
+def parse_relay_state(line, door_count):
+    """Decode a `type=rtstate` record into each door's relay state, or None for any other line.
+
+    The guide says the relay field is "currently 0", but on our C3-200 and C3-400 boards (checked
+    2026-10-09) it follows every switch: door 1 is 0x01, door 2 is 0x02, door 3 is 0x04. The hex is
+    read byte by byte, each byte's lowest bit first, the way ZKAccess 3.5 decodes it
+    (DeviceServerBll.SplitRelayState), so a two-byte value keeps doors 1-8 in its first byte. It
+    reports what the firmware drives the relay to, whoever switched it (a card, a command, a timed
+    open running out), not whether the contact physically moved. `time` is the last relay or sensor
+    change on the board, for any door.
+    """
+    fields = dict(part.split('=', 1) for part in line.strip().split('\t') if '=' in part)
+
+    if fields.get('type') != 'rtstate' or 'relay' not in fields:
+        return None
+
+    try:
+        relay_bytes = bytes.fromhex(fields['relay'])
+    except ValueError:
+        return None
+
+    def is_on(door):
+        byte, bit = divmod(door - 1, 8)
+        return byte < len(relay_bytes) and bool(relay_bytes[byte] >> bit & 1)
+
+    return {
+        'relays': [{'door': door, 'on': is_on(door)} for door in range(1, door_count + 1)],
+        'changed_at': fields.get('time'),
+    }
+
+
+def read_rt_log_ext(zk):
+    buffer = ctypes.create_string_buffer(RT_LOG_BUFFER_SIZE)
+    result = zk.sdk.dll.GetRTLogExt(zk.sdk.handle, buffer, RT_LOG_BUFFER_SIZE)
+
+    if result < 0:
+        raise Exception(f"GetRTLogExt failed with SDK error {result}")
+
+    return buffer.value.decode('utf-8', errors='replace')
+
+
+def read_relay_state(ip, port=4370, timeout=10000, password='', model=None):
+    """Return each door's relay state and the board's last change time, or None when it could not be read.
+
+    The controller answers with its door/alarm status only once its realtime event cache is empty,
+    so the events in front of it are read and dropped (the Transaction table keeps them). Only
+    GetRTLogExt is called: mixing it with GetRTLog on one session kept the cache from ever emptying.
+    """
+    def operation():
+        connstr = build_connstr(ip, port, timeout, password)
+        device_model = resolve_device_model(model)
+        door_count = len(device_model.doors_def)
+
+        try:
+            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
+                for attempt in range(1, RELAY_STATE_READS + 1):
+                    for line in read_rt_log_ext(zk).split('\r\n'):
+                        state = parse_relay_state(line, door_count)
+
+                        if state is not None:
+                            return state
+
+                    if attempt < RELAY_STATE_READS:
+                        time.sleep(RELAY_STATE_READ_DELAY_SECONDS)
+
+            write_output(f"[{get_local_time()}] No relay state after {RELAY_STATE_READS} reads: {ip}:{port}")
+            return None
+        except Exception as ex:
+            write_output(f"[{get_local_time()}] Exception when reading relay state: {ip}:{port} - {str(ex)}")
+            capture_exception(ex, device_ip=ip, operation='read_relay_state', port=port, model=model)
+            return None
 
     return with_device_lock(ip, port, operation)

@@ -142,6 +142,91 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         capture_exception.assert_called_once()
         self.assertEqual('control_door', capture_exception.call_args.kwargs['operation'])
 
+    # Recorded from a C3-200 on 2026-10-09: door 1 held open, then door 2 opened by a card.
+    RTSTATE_DOOR_1_ON = 'type=rtstate\ttime=2026-10-09 23:07:39\tsensor=00\trelay=01\talarm=00000000'
+    RTSTATE_DOOR_2_ON = 'type=rtstate\ttime=2026-10-09 23:10:55\tsensor=00\trelay=02\talarm=00000000'
+    RTLOG_EVENT = 'type=rtlog\ttime=2026-10-09 23:02:58\tpin=0\tcardno=0\teventaddr=1\tevent=205\tinoutstatus=2\tverifytype=200\tindex=406376'
+
+    def test_parse_relay_state_reads_one_bit_per_door_from_the_lowest(self):
+        self.assertEqual({
+            'relays': [{'door': 1, 'on': True}, {'door': 2, 'on': False}],
+            'changed_at': '2026-10-09 23:07:39',
+        }, main.parse_relay_state(self.RTSTATE_DOOR_1_ON, 2))
+        self.assertEqual(
+            [{'door': 1, 'on': False}, {'door': 2, 'on': True}, {'door': 3, 'on': False}, {'door': 4, 'on': False}],
+            main.parse_relay_state(self.RTSTATE_DOOR_2_ON, 4)['relays'],
+        )
+
+    def test_parse_relay_state_keeps_doors_1_to_8_in_the_first_byte(self):
+        line = 'type=rtstate\ttime=2026-10-09 23:46:27\tsensor=00\trelay=0400\talarm=00000000'
+
+        self.assertEqual(
+            [{'door': 1, 'on': False}, {'door': 2, 'on': False}, {'door': 3, 'on': True}, {'door': 4, 'on': False}],
+            main.parse_relay_state(line, 4)['relays'],
+        )
+
+    def test_parse_relay_state_ignores_events_and_garbage(self):
+        self.assertIsNone(main.parse_relay_state(self.RTLOG_EVENT, 2))
+        self.assertIsNone(main.parse_relay_state('', 2))
+        self.assertIsNone(main.parse_relay_state('type=rtstate\ttime=x\trelay=zz', 2))
+
+    def read_relay_state(self, answers):
+        """Run read_relay_state against a controller whose GetRTLogExt gives these answers in turn.
+
+        An answer is the buffer text, or a negative SDK error code.
+        """
+        answers = list(answers)
+        zk_instance = MagicMock()
+
+        def get_rt_log_ext(_handle, buffer, _size):
+            answer = answers.pop(0)
+
+            if isinstance(answer, int):
+                return answer
+
+            buffer.value = answer.encode()
+            return len(answer)
+
+        zk_instance.sdk.dll.GetRTLogExt.side_effect = get_rt_log_ext
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context), patch('main.time.sleep'), patch(
+            'main.get_local_time', return_value='2026-10-09 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.capture_exception') as capture_exception:
+            result = main.read_relay_state('10.0.0.15', 4370, model='C3-200')
+
+        return result, zk_instance, capture_exception
+
+    def test_read_relay_state_drops_queued_events_until_the_status_record(self):
+        result, zk_instance, _ = self.read_relay_state([
+            self.RTLOG_EVENT + '\r\n' + self.RTLOG_EVENT + '\r\n',
+            self.RTSTATE_DOOR_1_ON + '\r\n',
+        ])
+
+        self.assertEqual([{'door': 1, 'on': True}, {'door': 2, 'on': False}], result['relays'])
+        self.assertEqual(2, zk_instance.sdk.dll.GetRTLogExt.call_count)
+        zk_instance.sdk.dll.GetRTLog.assert_not_called()
+
+    def test_read_relay_state_gives_up_when_the_cache_never_empties(self):
+        result, zk_instance, _ = self.read_relay_state([self.RTLOG_EVENT + '\r\n'] * main.RELAY_STATE_READS)
+
+        self.assertIsNone(result)
+        self.assertEqual(main.RELAY_STATE_READS, zk_instance.sdk.dll.GetRTLogExt.call_count)
+
+    def test_read_relay_state_returns_none_and_reports_an_sdk_error(self):
+        result, _, capture_exception = self.read_relay_state([-2])
+
+        self.assertIsNone(result)
+        self.assertEqual('read_relay_state', capture_exception.call_args.kwargs['operation'])
+
+    def test_read_relay_state_runs_under_the_device_lock(self):
+        with patch('main.with_device_lock', return_value=None) as with_device_lock:
+            main.read_relay_state('10.0.0.15', 4370, model='C3-200')
+
+        self.assertEqual(('10.0.0.15', 4370), with_device_lock.call_args.args[:2])
+
     def test_check_device_reports_the_sdk_error_without_sending_it_to_sentry(self):
         with patch('main.ZKAccess', side_effect=Exception('SDK error -307: Connection attempt failed')), patch(
             'main.capture_exception'
