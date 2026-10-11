@@ -134,6 +134,26 @@ class QueueManagerIntegrationTest(unittest.TestCase):
             model='C3-400',
         )
 
+    def test_check_device_forwards_the_clock_sync_threshold(self):
+        with patch('queue_manager.check_device_func', return_value={'online': True, 'error': None}) as check_device_func:
+            queue_manager.check_device(
+                '10.0.0.15',
+                4370,
+                timeout=5000,
+                password='',
+                model='C3-400',
+                sync_clock_after_seconds=120,
+            )
+
+        check_device_func.assert_called_once_with(
+            '10.0.0.15',
+            4370,
+            timeout=5000,
+            password='',
+            model='C3-400',
+            sync_clock_after_seconds=120,
+        )
+
 
 if __name__ == '__main__':
     unittest.main()

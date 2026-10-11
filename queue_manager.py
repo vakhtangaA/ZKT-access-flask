@@ -101,7 +101,7 @@ def restart_device(ip, port=4370, timeout=10000, password='', model=None):
     )
 
 
-def check_device(ip, port=4370, timeout=10000, password='', model=None):
+def check_device(ip, port=4370, timeout=10000, password='', model=None, sync_clock_after_seconds=None):
     return with_device_lock(
         ip,
         port,
@@ -111,6 +111,7 @@ def check_device(ip, port=4370, timeout=10000, password='', model=None):
             timeout=timeout,
             password=password,
             model=model,
+            sync_clock_after_seconds=sync_clock_after_seconds,
         ),
     )
 
