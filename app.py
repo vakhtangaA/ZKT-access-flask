@@ -512,17 +512,31 @@ def health_controller():
             'message': 'The controller IP is required',
         }), 422
 
+    # Seconds the controller's clock may be off before the check sets it; left out, the clock is not touched.
+    sync_clock_after_seconds = body.get('sync_clock_after_seconds')
+
+    if sync_clock_after_seconds is not None:
+        try:
+            sync_clock_after_seconds = max(0, int(sync_clock_after_seconds))
+        except (TypeError, ValueError):
+            return jsonify({
+                'success': False,
+                'message': 'The sync_clock_after_seconds must be a number of seconds',
+            }), 422
+
     result = check_device(
         ip=ip,
         port=port,
         timeout=timeout,
         password=password,
         model=model,
+        sync_clock_after_seconds=sync_clock_after_seconds,
     )
 
     return jsonify({
         'success': result['online'],
         'message': 'Device is reachable' if result['online'] else (result['error'] or 'Device health check failed'),
+        'clock': result.get('clock'),
     }), 200
 
 if __name__ == '__main__':

@@ -699,22 +699,86 @@ def control_door(ip, port=4370, door=1, action='open', seconds=None, timeout=100
     return with_device_lock(ip, port, operation)
 
 
-def check_device(ip, port=4370, timeout=10000, password='', model=None):
+def tbilisi_now():
+    """Wall-clock time in Tbilisi without a zone, the way a controller keeps its clock.
+
+    The bridge server runs on UTC, so its own local time must never reach a controller.
+    """
+    return datetime.now(tz).replace(tzinfo=None, microsecond=0)
+
+
+def sync_controller_clock(zk, sync_after_seconds):
+    """Read the controller's clock and set it to Tbilisi time when it is more than `sync_after_seconds` off.
+
+    A controller that loses power with a flat clock battery restarts at 2000-01-01, and then every
+    card fails its validity check (event 29, "Card Expired"). The PULL SDK guide lists DateTime as
+    write-only, so the read is not trusted on its own: an unreadable clock is set anyway, and after
+    a write the clock is read again. A read that does not follow the write is reported as an error
+    with no drift, so a broken reader can never look like a clock that keeps resetting.
+    """
+    clock = {'controller_time': None, 'drift_seconds': None, 'synced': False, 'error': None}
+
+    try:
+        controller_time = zk.parameters.datetime
+        clock['controller_time'] = controller_time.strftime('%Y-%m-%d %H:%M:%S')
+        clock['drift_seconds'] = int((controller_time - tbilisi_now()).total_seconds())
+    except Exception as ex:
+        clock['error'] = f'Clock read failed: {ex}'
+
+    if clock['drift_seconds'] is not None and abs(clock['drift_seconds']) <= sync_after_seconds:
+        return clock
+
+    try:
+        zk.parameters.datetime = tbilisi_now()
+        clock['synced'] = True
+    except Exception as ex:
+        clock['error'] = f'Clock write failed: {ex}'
+
+        return clock
+
+    if clock['drift_seconds'] is None:
+        return clock
+
+    try:
+        after_sync = int((zk.parameters.datetime - tbilisi_now()).total_seconds())
+    except Exception as ex:
+        after_sync = None
+        clock['error'] = f'Clock read after the write failed: {ex}'
+
+    if after_sync is None or abs(after_sync) > sync_after_seconds:
+        clock['drift_seconds'] = None
+        clock['error'] = clock['error'] or 'Clock read does not follow the write, so the drift is unknown'
+
+    return clock
+
+
+def check_device(ip, port=4370, timeout=10000, password='', model=None, sync_clock_after_seconds=None):
     """Report whether the controller accepts a connection, and the SDK error when it does not.
 
-    An unreachable controller is an expected outcome rather than a bug, so it is not sent to Sentry.
+    With `sync_clock_after_seconds`, the same session also checks the controller's clock and sets
+    it when it is off by more than that (see sync_controller_clock). A clock problem never marks
+    the device offline. An unreachable controller is an expected outcome rather than a bug, so it
+    is not sent to Sentry.
     """
     def operation():
         connstr = build_connstr(ip, port, timeout, password)
         device_model = resolve_device_model(model)
 
         try:
-            with ZKAccess(connstr=connstr, device_model=device_model):
-                return {'online': True, 'error': None}
+            with ZKAccess(connstr=connstr, device_model=device_model) as zk:
+                clock = None
+
+                if sync_clock_after_seconds is not None:
+                    clock = sync_controller_clock(zk, sync_clock_after_seconds)
+
+                    if clock['synced'] or clock['error']:
+                        write_output(f"[{get_local_time()}] Clock on {ip}:{port}: was {clock['controller_time']}, drift {clock['drift_seconds']}s, synced={clock['synced']}, error={clock['error']}")
+
+                return {'online': True, 'error': None, 'clock': clock}
         except Exception as ex:
             text = f"[{get_local_time()}] Exception when checking device health: {ip}:{port} - {str(ex)}"
             write_output(text)
-            return {'online': False, 'error': str(ex)}
+            return {'online': False, 'error': str(ex), 'clock': None}
 
     return with_device_lock(ip, port, operation)
 

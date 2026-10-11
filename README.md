@@ -239,6 +239,22 @@ Opens and closes a real ZKTeco SDK connection. This is the preferred health
 check because ICMP ping can succeed while the controller service is unavailable.
 The endpoint requires the same shared Bearer token as the restart route.
 
+With `sync_clock_after_seconds` (a number), the same session also reads the
+controller's clock and sets it to Tbilisi time when it is off by more than that.
+A board that loses power with a flat clock battery restarts at 2000-01-01, and
+then every card is refused with event 29 ("Card Expired"). The response then
+carries `clock`:
+
+```json
+{"controller_time": "2000-01-01 00:17:15", "drift_seconds": -845000000, "synced": true, "error": null}
+```
+
+The PULL SDK guide lists `DateTime` as write-only, so the read is checked: an
+unreadable clock is set anyway, and after a write the clock is read again. When
+that second read does not follow the write, `drift_seconds` is `null` and
+`error` says so. A clock problem never marks the device offline. Without the
+field, `clock` is `null` and the clock is not touched.
+
 ## What `-307` Means
 
 In this project, `-307` comes from the vendor SDK path used by `pyzkaccess` when `Connect()` fails. In `pyzkaccess`, the error string maps to:

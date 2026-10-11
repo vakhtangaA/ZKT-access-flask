@@ -79,11 +79,103 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         ), patch('main.open', mock_open()):
             result = main.check_device('10.0.0.15', 4370, timeout=9000, model='C3-400')
 
-        self.assertEqual({'online': True, 'error': None}, result)
+        self.assertEqual({'online': True, 'error': None, 'clock': None}, result)
         zkteco.assert_called_once_with(
             connstr='protocol=TCP,ipaddress=10.0.0.15,port=4370,timeout=9000,passwd=',
             device_model=main.ZK400,
         )
+
+    def check_clock(self, reads, sync_after_seconds=120):
+        """Run a health check against a controller whose clock reads return `reads` in turn."""
+
+        class FakeParameters:
+            def __init__(self):
+                self.reads = list(reads)
+                self.written = []
+
+            @property
+            def datetime(self):
+                value = self.reads.pop(0)
+
+                if isinstance(value, Exception):
+                    raise value
+
+                return value
+
+            @datetime.setter
+            def datetime(self, value):
+                self.written.append(value)
+
+        parameters = FakeParameters()
+        zk_instance = MagicMock()
+        zk_instance.parameters = parameters
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context), patch(
+            'main.tbilisi_now', return_value=datetime(2026, 10, 11, 12, 0, 0),
+        ), patch('main.get_local_time', return_value='2026-10-11 12:00:00'), patch('main.open', mock_open()):
+            result = main.check_device('10.0.0.15', 4370, model='C3-200', sync_clock_after_seconds=sync_after_seconds)
+
+        return result, parameters.written
+
+    def test_check_device_leaves_a_clock_that_is_close_enough(self):
+        result, written = self.check_clock([datetime(2026, 10, 11, 12, 1, 0)])
+
+        self.assertTrue(result['online'])
+        self.assertEqual({'controller_time': '2026-10-11 12:01:00', 'drift_seconds': 60, 'synced': False, 'error': None}, result['clock'])
+        self.assertEqual([], written)
+
+    def test_check_device_sets_a_reset_clock_to_tbilisi_time(self):
+        result, written = self.check_clock([datetime(2000, 1, 1, 0, 17, 15), datetime(2026, 10, 11, 12, 0, 0)])
+
+        self.assertEqual([datetime(2026, 10, 11, 12, 0, 0)], written)
+        self.assertEqual('2000-01-01 00:17:15', result['clock']['controller_time'])
+        self.assertTrue(result['clock']['synced'])
+        self.assertLess(result['clock']['drift_seconds'], -800000000)
+        self.assertIsNone(result['clock']['error'])
+
+    def test_check_device_does_not_trust_a_clock_read_that_ignores_the_write(self):
+        result, written = self.check_clock([datetime(2000, 1, 1), datetime(2000, 1, 1)])
+
+        self.assertEqual(1, len(written))
+        self.assertTrue(result['clock']['synced'])
+        self.assertIsNone(result['clock']['drift_seconds'])
+        self.assertIn('does not follow', result['clock']['error'])
+
+    def test_check_device_still_sets_the_clock_when_it_cannot_be_read(self):
+        result, written = self.check_clock([Exception('SDK error -2'), Exception('SDK error -2')])
+
+        self.assertEqual([datetime(2026, 10, 11, 12, 0, 0)], written)
+        self.assertTrue(result['online'])
+        self.assertTrue(result['clock']['synced'])
+        self.assertIsNone(result['clock']['drift_seconds'])
+
+    def test_check_device_reports_a_failed_clock_write_without_going_offline(self):
+        class FailingParameters:
+            @property
+            def datetime(self):
+                return datetime(2000, 1, 1)
+
+            @datetime.setter
+            def datetime(self, value):
+                raise Exception('SDK error -3')
+
+        zk_instance = MagicMock()
+        zk_instance.parameters = FailingParameters()
+        successful_context = MagicMock()
+        successful_context.__enter__.return_value = zk_instance
+        successful_context.__exit__.return_value = False
+
+        with patch('main.ZKAccess', return_value=successful_context), patch(
+            'main.tbilisi_now', return_value=datetime(2026, 10, 11, 12, 0, 0),
+        ), patch('main.get_local_time', return_value='2026-10-11 12:00:00'), patch('main.open', mock_open()):
+            result = main.check_device('10.0.0.15', 4370, sync_clock_after_seconds=120)
+
+        self.assertTrue(result['online'])
+        self.assertFalse(result['clock']['synced'])
+        self.assertIn('SDK error -3', result['clock']['error'])
 
     def control_door_sdk_calls(self, **kwargs):
         zk_instance = MagicMock()
@@ -236,7 +328,7 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         ):
             result = main.check_device('10.0.0.15', 4370, model='C3-400')
 
-        self.assertEqual({'online': False, 'error': 'SDK error -307: Connection attempt failed'}, result)
+        self.assertEqual({'online': False, 'error': 'SDK error -307: Connection attempt failed', 'clock': None}, result)
         capture_exception.assert_not_called()
 
     def test_get_users_retries_and_succeeds_on_second_attempt(self):

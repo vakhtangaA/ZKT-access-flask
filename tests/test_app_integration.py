@@ -461,7 +461,32 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             timeout=9000,
             password='secret',
             model='C3-400',
+            sync_clock_after_seconds=None,
         )
+
+    def test_health_route_syncs_the_clock_when_asked_and_returns_it(self):
+        clock = {'controller_time': '2000-01-01 00:17:15', 'drift_seconds': -845000000, 'synced': True, 'error': None}
+
+        with patch('app.get_shared_secret', return_value='test-secret'), patch(
+            'app.check_device',
+            return_value={'online': True, 'error': None, 'clock': clock},
+        ) as check_device:
+            response = self.client.post('/controller/health/', headers={
+                'Authorization': 'Bearer test-secret',
+            }, json={'ip': '10.0.0.15', 'port': 4370, 'sync_clock_after_seconds': 120})
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(clock, response.get_json()['clock'])
+        self.assertEqual(120, check_device.call_args.kwargs['sync_clock_after_seconds'])
+
+    def test_health_route_rejects_a_sync_threshold_that_is_not_a_number(self):
+        with patch('app.get_shared_secret', return_value='test-secret'), patch('app.check_device') as check_device:
+            response = self.client.post('/controller/health/', headers={
+                'Authorization': 'Bearer test-secret',
+            }, json={'ip': '10.0.0.15', 'sync_clock_after_seconds': 'soon'})
+
+        self.assertEqual(422, response.status_code)
+        check_device.assert_not_called()
 
     def test_health_route_uses_short_default_device_timeout(self):
         with patch('app.get_shared_secret', return_value='test-secret'), patch(
@@ -483,6 +508,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             timeout=5000,
             password='',
             model='C3-400',
+            sync_clock_after_seconds=None,
         )
 
     def test_health_route_returns_the_device_error_as_the_message(self):
@@ -501,6 +527,7 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         self.assertEqual({
             'success': False,
             'message': 'SDK error -307: Connection attempt failed',
+            'clock': None,
         }, response.get_json())
 
     def test_ping_route_returns_ping_result(self):
