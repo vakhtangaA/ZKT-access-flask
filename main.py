@@ -1,6 +1,7 @@
 from pyzkaccess import ZKAccess, ZK200, ZK100, ZK400
 from pyzkaccess.common import ZKDatetimeUtils
 from pyzkaccess.enums import EVENT_TYPES
+from pyzkaccess.tables import User
 from datetime import datetime
 import ctypes
 from uuid import uuid4
@@ -121,6 +122,21 @@ def allowed_door_numbers(doors):
     return [door_number for door_number, allowed in enumerate(doors, start=1) if allowed]
 
 
+# The controller refuses a card (event 29, "Card Expired") while its own date is before the card's
+# StartTime. Writing today's date there locked every card out when ერედვის 85 lost power and
+# restarted at 2000-01-01 (2026-10-11). "0" means no start date: it is what the controllers hold
+# for cards written by ZKTeco's own software (see tests/test_capture_samples.py). pyzkaccess only
+# encodes a real date for this field, so the raw value is set directly.
+NO_START_DATE = '0'
+
+
+def user_record(card, pin):
+    """A User row with no start date, valid until 9999-12-31, without super-user rights."""
+    user = User(card=card, pin=pin, end_time=datetime(9999, 12, 31, 23, 59, 59), super_authorize=False)
+
+    return user.with_raw_data({**user.raw_data, 'StartTime': NO_START_DATE})
+
+
 def clear_stale_authorizations(zk, rewritten_pins, removed_pins, ip, operation_id):
     """Delete the UserAuthorize rows that a batch write would otherwise leave behind.
 
@@ -183,13 +199,7 @@ def add_users(users, ip, port=4370, timeout=4000, password='', model=None, opera
                 3 in doors,
                 4 in doors,
             )
-            user_records.append({
-                'card': str(item.get('card', '')),
-                'pin': str(item.get('pin', '')),
-                'start_time': datetime.now(),
-                'end_time': datetime(9999, 12, 31, 23, 59, 59),
-                'super_authorize': False,
-            })
+            user_records.append(user_record(str(item.get('card', '')), str(item.get('pin', ''))))
             authorization_records.append({
                 'pin': str(item.get('pin', '')),
                 'timezone_id': 1,
@@ -315,13 +325,7 @@ def delete_users(users, ip, port=4370, timeout=4000, password='', model=None, op
                 })
                 continue
 
-            rewrite_user_records.append({
-                'card': card,
-                'pin': pin,
-                'start_time': datetime.now(),
-                'end_time': datetime(9999, 12, 31, 23, 59, 59),
-                'super_authorize': False,
-            })
+            rewrite_user_records.append(user_record(card, pin))
             rewrite_authorization_records.append({
                 'pin': pin,
                 'timezone_id': 1,
