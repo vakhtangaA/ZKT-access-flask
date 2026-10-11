@@ -360,6 +360,16 @@ class MainDeviceIntegrationTest(unittest.TestCase):
 
         return result
 
+    def test_get_transactions_without_a_limit_returns_every_matching_event(self):
+        records = [
+            MagicMock(raw_data={'EventType': '0', 'Time_second': str(second), 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '1'})
+            for second in range(1, 4)
+        ]
+
+        result = self._transactions_result(records, limit=None)
+
+        self.assertEqual(['2026-10-03 23:00:03', '2026-10-03 23:00:02', '2026-10-03 23:00:01'], [event['time'] for event in result])
+
     def test_get_transactions_returns_newest_events_with_codes_and_names(self):
         records = [
             MagicMock(raw_data={'EventType': '0', 'Time_second': '1', 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '1'}),

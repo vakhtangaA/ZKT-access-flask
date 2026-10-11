@@ -324,12 +324,14 @@ def transactions():
     pin = body.get('pin')
     card = body.get('card')
 
+    # "all" returns every matching event. The whole table is read either way, so it only
+    # makes the response bigger, not the device session longer.
     try:
-        limit = max(1, min(int(body.get('limit', 50)), 500))
+        limit = None if body.get('limit') == 'all' else max(1, min(int(body.get('limit', 50)), 500))
     except (TypeError, ValueError):
         return jsonify({
             'success': False,
-            'message': 'The limit must be a number',
+            'message': 'The limit must be a number or "all"',
         }), 422
 
     date_from = body.get('date_from')

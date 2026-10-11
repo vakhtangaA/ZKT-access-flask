@@ -95,6 +95,20 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             date_to=None,
         )
 
+    def test_transactions_route_passes_all_as_no_limit(self):
+        with patch('app.get_transactions', return_value=[]) as get_transactions:
+            response = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'ip': '10.0.0.15', 'limit': 'all'})
+
+        self.assertEqual(200, response.status_code)
+        self.assertIsNone(get_transactions.call_args.kwargs['limit'])
+
+    def test_transactions_route_rejects_a_word_other_than_all_as_limit(self):
+        with patch('app.get_transactions') as get_transactions:
+            response = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'ip': '10.0.0.15', 'limit': 'many'})
+
+        self.assertEqual(422, response.status_code)
+        get_transactions.assert_not_called()
+
     def test_transactions_route_requires_ip(self):
         response = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'pin': '500080'})
 

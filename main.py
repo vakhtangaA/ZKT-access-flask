@@ -530,7 +530,7 @@ def event_time_bound(value, end_of_day):
 
 
 def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None, card=None, limit=50, event_codes=None, date_from=None, date_to=None):
-    """Return the newest access events the controller logged for a pin or card.
+    """Return the newest access events the controller logged for a pin or card, all of them when limit is None.
 
     Each event keeps the raw event code next to its name, so a denied tap (23) can be told
     apart from an opened door (0) per door number. The whole table is read and then matched
