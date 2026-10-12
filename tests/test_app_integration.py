@@ -95,6 +95,26 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
             date_to=None,
         )
 
+    def test_transactions_route_matches_any_of_several_pins_and_rejects_a_bad_list(self):
+        with patch('app.get_transactions', return_value=[]) as get_transactions:
+            response = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={
+                'ip': '10.0.0.15',
+                'pins': ['7663', '76630', '76631'],
+            })
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(['7663', '76630', '76631'], get_transactions.call_args.kwargs['pin'])
+
+        for pins in ('76630', [], ['76630', ''], ['76630', None]):
+            with self.subTest(pins=pins), patch('app.get_transactions') as get_transactions:
+                response = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={
+                    'ip': '10.0.0.15',
+                    'pins': pins,
+                })
+
+                self.assertEqual(422, response.status_code)
+                get_transactions.assert_not_called()
+
     def test_transactions_route_passes_all_as_no_limit(self):
         with patch('app.get_transactions', return_value=[]) as get_transactions:
             response = self.client.post('/controller/transactions/', headers=self.AUTH_HEADERS, json={'ip': '10.0.0.15', 'limit': 'all'})

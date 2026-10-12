@@ -507,6 +507,37 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual([], unmatched)
         self.assertEqual(['10603', '561', '20541'], [event['pin'] for event in everything])
 
+    def test_get_transactions_treats_percent_in_a_pin_as_any_run_of_characters(self):
+        records = [
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '1', 'Pin': '41030', 'Cardno': '1', 'DoorID': '1'}),
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '2', 'Pin': '41031', 'Cardno': '2', 'DoorID': '1'}),
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '3', 'Pin': '410', 'Cardno': '3', 'DoorID': '1'}),
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '4', 'Pin': '74103', 'Cardno': '4', 'DoorID': '1'}),
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '5', 'Pin': '4.03', 'Cardno': '5', 'DoorID': '1'}),
+        ]
+
+        def pins(pattern):
+            return sorted(event['pin'] for event in self._transactions_result(records, pin=pattern))
+
+        self.assertEqual(['41030', '41031'], pins('4103%'))
+        self.assertEqual(['41030', '41031', '74103'], pins('%4103%'))
+        self.assertEqual(['41031'], pins('%31'))
+        self.assertEqual(['4.03', '410', '41030', '41031', '74103'], pins('%'))
+        self.assertEqual(['4.03'], pins('4.03'), 'characters other than % match only themselves')
+        self.assertEqual(['410'], pins('410'), 'without % the pin must match exactly')
+
+    def test_get_transactions_matches_any_pin_of_a_list(self):
+        records = [
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '1', 'Pin': '76630', 'Cardno': '1', 'DoorID': '1'}),
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '2', 'Pin': '76631', 'Cardno': '2', 'DoorID': '1'}),
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '3', 'Pin': '766300', 'Cardno': '3', 'DoorID': '1'}),
+            MagicMock(raw_data={'EventType': '0', 'Time_second': '4', 'Pin': '7663', 'Cardno': '4', 'DoorID': '1'}),
+        ]
+
+        result = self._transactions_result(records, pin=['7663', '76630', '76631'])
+
+        self.assertEqual(['7663', '76631', '76630'], [event['pin'] for event in result])
+
     def test_get_transactions_keeps_only_the_requested_event_types(self):
         records = [
             MagicMock(raw_data={'EventType': '0', 'Time_second': '1', 'Pin': '500080', 'Cardno': '504438413', 'DoorID': '1'}),

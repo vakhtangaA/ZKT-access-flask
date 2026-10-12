@@ -9,6 +9,7 @@ import ping3
 import time
 import sys
 import pytz
+import re
 from device_locks import output_lock, with_device_lock
 from observability import capture_exception
 
@@ -532,6 +533,26 @@ def event_time_bound(value, end_of_day):
     return datetime.strptime(value, '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d %H:%M:%S')
 
 
+def pin_matcher(pin):
+    """A test for a transaction's pin: exact, or with each % standing for any run of characters, as in SQL LIKE.
+
+    A list matches a pin that matches any of its entries, which is how an account's chips are found.
+    """
+    if isinstance(pin, list):
+        matchers = [pin_matcher(entry) for entry in pin]
+
+        return lambda value: any(matches(value) for matches in matchers)
+
+    wanted = str(pin).strip()
+
+    if '%' not in wanted:
+        return lambda value: value == wanted
+
+    pattern = re.compile('.*'.join(re.escape(part) for part in wanted.split('%')))
+
+    return lambda value: pattern.fullmatch(value) is not None
+
+
 def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None, card=None, limit=50, event_codes=None, date_from=None, date_to=None):
     """Return the newest access events the controller logged for a pin or card, all of them when limit is None.
 
@@ -541,7 +562,8 @@ def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None,
     device could not be read.
     """
     def read_events(zk):
-        wanted_pin = str(pin).strip() if pin else None
+        wanted_pin = pin if isinstance(pin, list) else (str(pin).strip() if pin else None)
+        pin_matches = pin_matcher(pin) if wanted_pin else None
         wanted_card = str(card).strip() if card else None
         wanted_event_codes = {int(code) for code in event_codes} if event_codes else None
         earliest = event_time_bound(date_from, end_of_day=False)
@@ -555,7 +577,7 @@ def get_transactions(ip, port, timeout=10000, password='', model=None, pin=None,
             total += 1
             raw = record.raw_data
 
-            if wanted_pin and str(raw.get('Pin', '')).strip() != wanted_pin:
+            if pin_matches and not pin_matches(str(raw.get('Pin', '')).strip()):
                 continue
 
             if wanted_card and str(raw.get('Cardno', '')).strip() != wanted_card:

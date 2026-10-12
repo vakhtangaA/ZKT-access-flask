@@ -342,6 +342,18 @@ def transactions():
     pin = body.get('pin')
     card = body.get('card')
 
+    # Several exact pins (or % patterns), for every chip of one account.
+    if 'pins' in body:
+        pins = body.get('pins')
+
+        if not isinstance(pins, list) or pins == [] or not all(is_identifier(entry) for entry in pins):
+            return jsonify({
+                'success': False,
+                'message': 'The pins must be a non-empty list of pins',
+            }), 422
+
+        pin = pins
+
     # "all" returns every matching event. The whole table is read either way, so it only
     # makes the response bigger, not the device session longer.
     try:
