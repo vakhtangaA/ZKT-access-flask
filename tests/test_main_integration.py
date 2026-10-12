@@ -651,9 +651,9 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         zk_instance.table.assert_any_call('UserAuthorize')
         user_table.upsert.assert_called_once()
         authorization_table.upsert.assert_called_once()
-        # No start date, so a controller whose clock reset to 2000-01-01 still lets the cards in.
+        # Valid from 2000-01-01, so a controller whose clock reset to that day still lets the cards in.
         self.assertEqual(
-            [('12345', '54321', '0', '99991231'), ('12346', '54322', '0', '99991231')],
+            [('12345', '54321', '20000101', '99991231'), ('12346', '54322', '20000101', '99991231')],
             [(record.raw_data['CardNo'], record.raw_data['Pin'], record.raw_data['StartTime'], record.raw_data['EndTime'])
              for record in user_table.upsert.call_args[0][0]],
         )
@@ -803,7 +803,7 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual(['54322'], [record['pin'] for record in deleted_records])
 
         rewritten_records = user_table.upsert.call_args[0][0]
-        self.assertEqual([('54321', '0')], [(record.pin, record.raw_data['StartTime']) for record in rewritten_records])
+        self.assertEqual([('54321', '20000101')], [(record.pin, record.raw_data['StartTime']) for record in rewritten_records])
         self.assertEqual(
             [(True, False, False, False)],
             [record['doors'] for record in authorization_table.upsert.call_args[0][0]],

@@ -124,17 +124,15 @@ def allowed_door_numbers(doors):
 
 # The controller refuses a card (event 29, "Card Expired") while its own date is before the card's
 # StartTime. Writing today's date there locked every card out when ერედვის 85 lost power and
-# restarted at 2000-01-01 (2026-10-11). "0" means no start date: it is what the controllers hold
-# for cards written by ZKTeco's own software (see tests/test_capture_samples.py). pyzkaccess only
-# encodes a real date for this field, so the raw value is set directly.
-NO_START_DATE = '0'
+# restarted at 2000-01-01 (2026-10-11). The raw StartTime '0' tried next (2026-10-12) was refused
+# outright on დავარის 29 when paired with our EndTime, so the start is a real date again: the day a
+# reset board wakes up on, which still passes the check after a clock loss.
+VALID_FROM = datetime(2000, 1, 1)
 
 
 def user_record(card, pin):
-    """A User row with no start date, valid until 9999-12-31, without super-user rights."""
-    user = User(card=card, pin=pin, end_time=datetime(9999, 12, 31, 23, 59, 59), super_authorize=False)
-
-    return user.with_raw_data({**user.raw_data, 'StartTime': NO_START_DATE})
+    """A User row valid from 2000-01-01 to 9999-12-31, without super-user rights."""
+    return User(card=card, pin=pin, start_time=VALID_FROM, end_time=datetime(9999, 12, 31, 23, 59, 59), super_authorize=False)
 
 
 def clear_stale_authorizations(zk, rewritten_pins, removed_pins, ip, operation_id):
