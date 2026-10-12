@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 import hmac
 import os
 from device_locks import output_lock
-from main import DOOR_ACTIONS, event_time_bound, ping_host_endpoint, resolve_device_model
+from main import DOOR_ACTIONS, event_time_bound, ping_host_endpoint, resolve_device_model, write_output
 from observability import initialize_sentry
 from queue_manager import add_users, check_device, control_door, delete_users, get_transactions, get_users, get_users_with_doors, read_relay_state, restart_device
 import sys
@@ -120,6 +120,32 @@ def invalid_user_indexes(users):
         or not is_door_list(user.get('doors'))
     ]
 
+def rejected_users_response(body, users, invalid_indexes):
+    """Log a batch rejected for its cards, then answer 422 without touching the controller.
+
+    One card without a number or pin rejects the whole batch, so the log names the cards: a
+    silent 422 hid why no card reached block 65's controller (2026-10-12).
+    """
+    invalid_cards = [
+        {
+            'index': index,
+            'card': users[index].get('card') if isinstance(users[index], dict) else None,
+            'pin': users[index].get('pin') if isinstance(users[index], dict) else None,
+        }
+        for index in invalid_indexes
+    ]
+    write_output(
+        f"[{get_local_time()}] Batch {body.get('operation_id')} rejected for {body.get('ip')}: "
+        f"{len(invalid_indexes)} of {len(users)} cards invalid {invalid_cards}"
+    )
+
+    return jsonify({
+        'success': False,
+        'message': 'Each user requires card and pin, and doors must be a list of door numbers',
+        'invalid_indexes': invalid_indexes,
+    }), 422
+
+
 @app.route('/')
 def home():
     print(f"[{get_local_time()}] Server received an empty request")
@@ -177,11 +203,7 @@ def set_users():
     invalid_users = invalid_user_indexes(users)
 
     if invalid_users:
-        return jsonify({
-            'success': False,
-            'message': 'Each user requires card and pin, and doors must be a list of door numbers',
-            'invalid_indexes': invalid_users,
-        }), 422
+        return rejected_users_response(body, users, invalid_users)
 
     result = add_users(
         users=users,
@@ -217,11 +239,7 @@ def remove_users():
     invalid_users = invalid_user_indexes(users)
 
     if invalid_users:
-        return jsonify({
-            'success': False,
-            'message': 'Each user requires card and pin, and doors must be a list of door numbers',
-            'invalid_indexes': invalid_users,
-        }), 422
+        return rejected_users_response(body, users, invalid_users)
 
     result = delete_users(
         users=users,

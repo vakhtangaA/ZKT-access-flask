@@ -25,9 +25,10 @@ MODEL_MAP = {
 RETRY_DELAY_SECONDS = 0.5
 MAX_WRITE_ATTEMPTS = 2
 
+TBILISI = pytz.timezone('Asia/Tbilisi')
+
 def get_local_time():
-    tz = pytz.timezone('Asia/Tbilisi')
-    return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+    return datetime.now(TBILISI).strftime('%Y-%m-%d %H:%M:%S')
 
 connstr = "protocol=TCP,ipaddress=149.3.34.167,port=4370,timeout=10000,passwd="
 
@@ -706,7 +707,7 @@ def tbilisi_now():
 
     The bridge server runs on UTC, so its own local time must never reach a controller.
     """
-    return datetime.now(tz).replace(tzinfo=None, microsecond=0)
+    return datetime.now(TBILISI).replace(tzinfo=None, microsecond=0)
 
 
 def sync_controller_clock(zk, sync_after_seconds):

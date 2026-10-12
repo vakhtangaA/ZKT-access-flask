@@ -24,6 +24,14 @@ def authorization_row(pin, timezone_id, mask):
 
 
 class MainDeviceIntegrationTest(unittest.TestCase):
+    def test_tbilisi_now_runs_unmocked_and_is_four_hours_ahead_of_utc(self):
+        # Every clock sync failed with "name 'tz' is not defined" (2026-10-12) while the tests mocked it.
+        now = main.tbilisi_now()
+        utc_now = datetime.utcnow()
+
+        self.assertIsNone(now.tzinfo)
+        self.assertLess(abs((now - utc_now).total_seconds() - 4 * 3600), 5)
+
     def test_resolve_device_model_maps_aliases_and_defaults(self):
         self.assertIs(main.ZK100, main.resolve_device_model('c3-100'))
         self.assertIs(main.ZK200, main.resolve_device_model('acp-200'))

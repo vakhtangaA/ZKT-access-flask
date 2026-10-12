@@ -675,6 +675,28 @@ class FlaskRouteIntegrationTest(unittest.TestCase):
         self.assertEqual(422, missing_card.status_code)
         self.assertEqual([0], missing_card.get_json()['invalid_indexes'])
 
+    def test_bulk_routes_log_a_rejected_batch_with_the_invalid_cards(self):
+        # Block 65 (2026-10-12): cardless tags got every batch rejected, and output.txt showed nothing.
+        users = [
+            {'card': '12345', 'pin': '54321'},
+            {'card': '', 'pin': '41030'},
+        ]
+
+        for route, target in (('/controller/users/set/', 'app.add_users'), ('/controller/users/remove/', 'app.delete_users')):
+            with self.subTest(route=route), patch(target) as batch_writer, patch('app.write_output') as write_output:
+                self.client.post(route, headers=self.AUTH_HEADERS, json={
+                    'ip': '10.0.0.15',
+                    'operation_id': 'operation-65',
+                    'users': users,
+                })
+
+                batch_writer.assert_not_called()
+                write_output.assert_called_once()
+                message = write_output.call_args.args[0]
+                self.assertIn('operation-65', message)
+                self.assertIn('10.0.0.15', message)
+                self.assertIn("[{'index': 1, 'card': '', 'pin': '41030'}]", message)
+
     def test_bulk_routes_reject_null_identifiers_and_malformed_doors(self):
         users = [
             {'card': None, 'pin': '54321'},
