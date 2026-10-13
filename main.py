@@ -137,6 +137,62 @@ def user_record(card, pin):
     return User(card=card, pin=pin, start_time=VALID_FROM, end_time=datetime(9999, 12, 31, 23, 59, 59), super_authorize=False)
 
 
+def write_user_rows(zk, records):
+    """Upsert User rows and return the pins the controller does not hold afterwards.
+
+    A C3-200 skips every new pin of a User write that also holds a pin it already has, and the
+    SDK still returns success. Seen on block 58 (2026-10-07) and on 185.146.179.174 (2026-10-14),
+    where 30 held pins plus 1 new pin lost the new one whether it came first or last, with or
+    without a wait, while 300 new pins alone all stored. So held and new pins go in separate
+    writes, and the table is read back to catch anything the controller still drops.
+    """
+    held_pins = read_user_pins(zk)
+    held = [record for record in records if record.pin in held_pins]
+    new = [record for record in records if record.pin not in held_pins]
+
+    for group in (held, new):
+        if group:
+            zk.table('User').upsert(group)
+
+    stored_pins = read_user_pins(zk)
+
+    return {record.pin for record in records} - stored_pins
+
+
+def read_user_pins(zk, attempts=3):
+    """The pins in the controller's User table, read again after a failure.
+
+    A read straight after a write once failed with -11 (2026-10-14), and repeating only the read
+    is cheaper than rewriting the whole batch.
+    """
+    for attempt in range(1, attempts + 1):
+        try:
+            return {row.pin for row in zk.table('User')}
+        except Exception:
+            if attempt == attempts:
+                raise
+            time.sleep(1)
+
+
+def written_results(users, missing_pins):
+    """One result per requested card; a card whose pin the controller did not store failed."""
+    return [
+        {
+            'card': item.get('card'),
+            'pin': item.get('pin'),
+            'success': True,
+        }
+        if str(item.get('pin', '')) not in missing_pins
+        else {
+            'card': item.get('card'),
+            'pin': item.get('pin'),
+            'success': False,
+            'error': 'The controller did not store this card',
+        }
+        for item in users
+    ]
+
+
 def clear_stale_authorizations(zk, rewritten_pins, removed_pins, ip, operation_id):
     """Delete the UserAuthorize rows that a batch write would otherwise leave behind.
 
@@ -215,28 +271,22 @@ def add_users(users, ip, port=4370, timeout=4000, password='', model=None, opera
                     device_model=resolve_device_model(model),
                 ) as zk:
                     clear_stale_authorizations(zk, [record['pin'] for record in authorization_records], [], ip, operation_id)
-                    zk.table('User').upsert(user_records)
+                    missing_pins = write_user_rows(zk, user_records)
                     zk.table('UserAuthorize').upsert(authorization_records)
 
                 elapsed_ms = int(round((time.monotonic() - started_at) * 1000))
-                results = [
-                    {
-                        'card': item.get('card'),
-                        'pin': item.get('pin'),
-                        'success': True,
-                    }
-                    for item in normalized_users
-                ]
+                results = written_results(normalized_users, missing_pins)
                 write_output(
                     f"[{get_local_time()}] Batch {operation_id} completed on {ip}: "
                     f"{len(normalized_users)} users in {elapsed_ms} ms"
+                    + (f"; not stored: {', '.join(sorted(missing_pins))}" if missing_pins else '')
                 )
                 return {
                     'success': True,
                     'operation_id': operation_id,
                     'total': len(results),
-                    'succeeded': len(results),
-                    'failed': 0,
+                    'succeeded': sum(item['success'] for item in results),
+                    'failed': sum(not item['success'] for item in results),
                     'elapsed_ms': elapsed_ms,
                     'results': results,
                 }
@@ -354,29 +404,24 @@ def delete_users(users, ip, port=4370, timeout=4000, password='', model=None, op
                     if delete_records:
                         zk.table('User').delete(delete_records)
 
+                    missing_pins = set()
                     if rewrite_user_records:
-                        zk.table('User').upsert(rewrite_user_records)
+                        missing_pins = write_user_rows(zk, rewrite_user_records)
                         zk.table('UserAuthorize').upsert(rewrite_authorization_records)
 
                 elapsed_ms = int(round((time.monotonic() - started_at) * 1000))
-                results = [
-                    {
-                        'card': item.get('card'),
-                        'pin': item.get('pin'),
-                        'success': True,
-                    }
-                    for item in normalized_users
-                ]
+                results = written_results(normalized_users, missing_pins)
                 write_output(
                     f"[{get_local_time()}] Batch {operation_id} removed {len(results)} users on {ip} "
                     f"({len(rewrite_user_records)} rewritten) in {elapsed_ms} ms"
+                    + (f"; not stored: {', '.join(sorted(missing_pins))}" if missing_pins else '')
                 )
                 return {
                     'success': True,
                     'operation_id': operation_id,
                     'total': len(results),
-                    'succeeded': len(results),
-                    'failed': 0,
+                    'succeeded': sum(item['success'] for item in results),
+                    'failed': sum(not item['success'] for item in results),
                     'rewritten': len(rewrite_user_records),
                     'elapsed_ms': elapsed_ms,
                     'results': results,

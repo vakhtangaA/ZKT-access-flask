@@ -126,6 +126,8 @@ Response (`200` when the batch succeeded, `502` when the SDK could not complete 
 }
 ```
 
+The bridge reads the `User` table back after writing, so a card the controller silently dropped comes back as `"success": false` with `"error": "The controller did not store this card"`, while the batch itself stays `"success": true`. Pins the controller already holds and new pins are written separately, because a C3-200 skips every new pin of a write that also holds a known pin (see `write_user_rows` in `main.py`).
+
 ### `POST /controller/users/remove/`
 
 Removes cards from one controller, with the same body and response as `/controller/users/set/`. An item that carries `doors` is not removed: the card stays and only its door mask is rewritten to those doors (a turned-off resident who keeps the entrance).

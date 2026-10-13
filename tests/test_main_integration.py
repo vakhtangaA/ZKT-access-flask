@@ -23,6 +23,58 @@ def authorization_row(pin, timezone_id, mask):
     })
 
 
+class FirmwareUserTable:
+    """A User table that drops pins the way a C3-200 does.
+
+    Measured on 185.146.179.174 (2026-10-14): a write that holds even one pin the controller
+    already has skips every new pin in it and still succeeds; a write of new pins only stores
+    them all. Pins in `refused` are never stored, however they are written.
+    """
+
+    def __init__(self, pins=(), refused=(), failing_reads=()):
+        self.pins = set(pins)
+        self.refused = set(refused)
+        self.failing_reads = set(failing_reads)
+        self.reads = 0
+        self.upserts = []
+        self.deleted = []
+
+    def __iter__(self):
+        self.reads += 1
+        if self.reads in self.failing_reads:
+            raise Exception('GetDeviceData failed: SDK error -11: Data parameter error')
+
+        return iter([MagicMock(pin=pin) for pin in sorted(self.pins)])
+
+    def upsert(self, records):
+        records = list(records)
+        self.upserts.append(records)
+        mixed = any(record.pin in self.pins for record in records)
+        self.pins |= {
+            record.pin for record in records
+            if record.pin not in self.refused and (record.pin in self.pins or not mixed)
+        }
+
+    def delete(self, records):
+        records = list(records)
+        self.deleted.append(records)
+        self.pins -= {record['pin'] for record in records}
+
+
+def zk_with_tables(user_table, authorization_table=None):
+    authorization_table = authorization_table or MagicMock()
+    zk_instance = MagicMock()
+    zk_instance.table.side_effect = lambda name: {
+        'User': user_table,
+        'UserAuthorize': authorization_table,
+    }[name]
+    context = MagicMock()
+    context.__enter__.return_value = zk_instance
+    context.__exit__.return_value = False
+
+    return context
+
+
 class MainDeviceIntegrationTest(unittest.TestCase):
     def test_tbilisi_now_runs_unmocked_and_is_four_hours_ahead_of_utc(self):
         # Every clock sync failed with "name 'tz' is not defined" (2026-10-12) while the tests mocked it.
@@ -653,16 +705,10 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual((True, True, True, True), self._written_door_access(None))
 
     def test_add_users_upserts_user_and_authorization_records_in_one_connection(self):
-        zk_instance = MagicMock()
-        user_table = MagicMock()
+        user_table = FirmwareUserTable()
         authorization_table = MagicMock()
-        zk_instance.table.side_effect = lambda name: {
-            'User': user_table,
-            'UserAuthorize': authorization_table,
-        }[name]
-        successful_context = MagicMock()
-        successful_context.__enter__.return_value = zk_instance
-        successful_context.__exit__.return_value = False
+        successful_context = zk_with_tables(user_table, authorization_table)
+        zk_instance = successful_context.__enter__.return_value
 
         users = [
             {'card': '12345', 'pin': '54321', 'doors': [1, 3]},
@@ -688,14 +734,93 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual(1, zkteco.call_count)
         zk_instance.table.assert_any_call('User')
         zk_instance.table.assert_any_call('UserAuthorize')
-        user_table.upsert.assert_called_once()
+        self.assertEqual(1, len(user_table.upserts))
         authorization_table.upsert.assert_called_once()
         # Valid from 2000-01-01, so a controller whose clock reset to that day still lets the cards in.
         self.assertEqual(
             [('12345', '54321', '20000101', '99991231'), ('12346', '54322', '20000101', '99991231')],
             [(record.raw_data['CardNo'], record.raw_data['Pin'], record.raw_data['StartTime'], record.raw_data['EndTime'])
-             for record in user_table.upsert.call_args[0][0]],
+             for record in user_table.upserts[0]],
         )
+
+    def _write(self, operation, users, user_table, operation_id='operation-split'):
+        with patch('main.ZKAccess', return_value=zk_with_tables(user_table)), patch(
+            'main.get_local_time',
+            return_value='2026-04-17 00:00:00',
+        ), patch('main.open', mock_open()), patch('main.print'):
+            return operation(users, '10.0.0.15', 4370, operation_id=operation_id)
+
+    def test_add_users_stores_new_pins_next_to_pins_the_controller_already_has(self):
+        # The resync of 2026-10-14 sent 824 held pins and 17 new coworker pins in one write; the 17 never landed.
+        user_table = FirmwareUserTable(pins={'51510', '51511'})
+
+        result = self._write(
+            main.add_users,
+            [
+                {'card': '795665084', 'pin': '51510'},
+                {'card': '1314596814', 'pin': '12010'},
+                {'card': '722355820', 'pin': '51511'},
+                {'card': '310913662', 'pin': '12030'},
+            ],
+            user_table,
+        )
+
+        self.assertEqual({'51510', '51511', '12010', '12030'}, user_table.pins)
+        self.assertEqual(
+            [['51510', '51511'], ['12010', '12030']],
+            [[record.pin for record in write] for write in user_table.upserts],
+        )
+        self.assertEqual(4, result['succeeded'])
+
+    def test_add_users_reports_a_card_the_controller_did_not_store_as_failed(self):
+        user_table = FirmwareUserTable(pins={'51510'}, refused={'12010'})
+
+        result = self._write(
+            main.add_users,
+            [{'card': '795665084', 'pin': '51510'}, {'card': '1314596814', 'pin': '12010'}],
+            user_table,
+        )
+
+        # The batch itself ran, so Laravel keeps the stored card and retries only the dropped one.
+        self.assertTrue(result['success'])
+        self.assertEqual(1, result['succeeded'])
+        self.assertEqual(1, result['failed'])
+        self.assertEqual(
+            [('51510', True), ('12010', False)],
+            [(item['pin'], item['success']) for item in result['results']],
+        )
+        self.assertIn('did not store', result['results'][1]['error'])
+
+    def test_add_users_reads_the_user_table_again_after_a_failed_read(self):
+        # A read straight after a 31-row write once failed with -11 on 185.146.179.174 (2026-10-14).
+        user_table = FirmwareUserTable(pins={'51510'}, failing_reads={2})
+
+        with patch('main.time.sleep'):
+            result = self._write(
+                main.add_users,
+                [{'card': '795665084', 'pin': '51510'}, {'card': '1314596814', 'pin': '12010'}],
+                user_table,
+            )
+
+        # The read is repeated, not the whole batch.
+        self.assertEqual(2, result['succeeded'])
+        self.assertEqual(2, len(user_table.upserts))
+
+    def test_delete_users_narrows_a_pin_the_controller_does_not_have_yet(self):
+        user_table = FirmwareUserTable(pins={'51510', '51520'})
+
+        result = self._write(
+            main.delete_users,
+            [
+                {'card': '795665084', 'pin': '51510', 'doors': [1]},
+                {'card': '1314596814', 'pin': '12010', 'doors': [1]},
+                {'card': '555845829', 'pin': '51520'},
+            ],
+            user_table,
+        )
+
+        self.assertEqual({'51510', '12010'}, user_table.pins)
+        self.assertEqual(3, result['succeeded'])
 
     def test_add_users_retries_only_after_a_failed_sdk_operation(self):
         successful_context = MagicMock()
@@ -802,16 +927,9 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         authorization_table.upsert.assert_called_once()
 
     def test_delete_users_deletes_records_and_narrows_kept_doors_in_one_connection(self):
-        zk_instance = MagicMock()
-        user_table = MagicMock()
+        user_table = FirmwareUserTable(pins={'54321', '54322'})
         authorization_table = MagicMock()
-        zk_instance.table.side_effect = lambda name: {
-            'User': user_table,
-            'UserAuthorize': authorization_table,
-        }[name]
-        successful_context = MagicMock()
-        successful_context.__enter__.return_value = zk_instance
-        successful_context.__exit__.return_value = False
+        successful_context = zk_with_tables(user_table, authorization_table)
 
         users = [
             {'card': '12345', 'pin': '54321', 'doors': [1]},
@@ -838,10 +956,10 @@ class MainDeviceIntegrationTest(unittest.TestCase):
         self.assertEqual(1, zkteco.call_count)
 
         # A user who keeps doors is never deleted, so a failed write cannot drop them from the device.
-        deleted_records = user_table.delete.call_args[0][0]
+        deleted_records = user_table.deleted[0]
         self.assertEqual(['54322'], [record['pin'] for record in deleted_records])
 
-        rewritten_records = user_table.upsert.call_args[0][0]
+        rewritten_records = user_table.upserts[0]
         self.assertEqual([('54321', '20000101')], [(record.pin, record.raw_data['StartTime']) for record in rewritten_records])
         self.assertEqual(
             [(True, False, False, False)],
